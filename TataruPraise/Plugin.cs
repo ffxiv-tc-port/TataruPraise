@@ -43,11 +43,14 @@ public sealed class Plugin : IDalamudPlugin
         Service = new PraiseService(Config, Pool);
         Jobs = new PoolJobs(Config, Pool);
         triggers = new TriggerWatcher(Config, Service);
-        dtr = new DtrDisplay(Config, Pool, Service);
-        ipc = new IpcProvider(Service);
 
+        // 🔴 設定視窗要在 DTR 之前建好：那一格的右鍵會呼叫 ToggleConfig，
+        //    先建視窗才不會有「格子已經掛上去、視窗還是 null」的空窗期。
         configWindow = new ConfigWindow(this);
         WindowSystem.AddWindow(configWindow);
+
+        dtr = new DtrDisplay(Config, Pool, Service, ToggleConfig);
+        ipc = new IpcProvider(Service);
 
         Svc.PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenConfigUi += ToggleConfig;
