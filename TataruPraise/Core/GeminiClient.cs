@@ -107,10 +107,15 @@ public static class GeminiClient
     /// ⚠️ 人設本文寫「只輸出一到兩句」，這裡收成「只能一句」。兩者字面上打架，所以這段開頭
     /// 明講「優先於上面的一到兩句」——模型看得懂，人來讀的時候也不會以為是漏改。
     /// </para>
+    /// <para>
+    /// 🔴 字數範圍<b>不是寫死的</b>，是 <see cref="PraiseText.LengthHint"/> 依那個情境的
+    /// <b>有效句長上限</b>算出來的（情境可以各自覆寫上限）。提示詞說的範圍與硬過濾的上限對不起來時，
+    /// 良率會掉到接近 0，而且看起來像模型壞掉——那是這一版最容易踩的靜默失敗。
+    /// </para>
     /// </remarks>
-    public const string LengthPrompt =
+    public static string LengthPromptFor(int minChars, int maxChars) =>
         "額外的長度約束(優先於上面的一到兩句)："
-        + "每句只能是一句話，12~25 個中文字，最多一個逗號；"
+        + $"每句只能是一句話，{minChars}~{maxChars} 個中文字，最多一個逗號；"
         + "要像順口講出來的一句話，不要堆疊多個理由、不要複述情境、不要接兩三個子句、不要鋪陳前情。";
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
@@ -128,7 +133,7 @@ public static class GeminiClient
     /// 其他狀態碼（例如 <c>400</c> 金鑰錯、<c>404</c> 模型已下架）重試沒有意義，直接放棄。
     /// </remarks>
     public static async Task<List<string>> GenerateAsync(
-        string apiKey, string model, string category, int count, int maxLength,
+        string apiKey, string model, string category, string situation, int count, int maxLength,
         CancellationToken token, GenerateStats? stats = null)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -137,18 +142,24 @@ public static class GeminiClient
             return [];
         }
 
-        var situation = PraiseCategory.DescribeSituation(category);
+        // 🔴 提示詞裡的目標字數一律從「這個情境的有效上限」算，不寫死：
+        //    情境可以各自覆寫上限（短通知句是 16），寫死 12~25 會讓生回來的句子幾乎全被過濾掉。
+        var (hintMin, hintMax) = PraiseText.LengthHint(maxLength);
+        var describedSituation = string.IsNullOrWhiteSpace(situation)
+            ? PraiseCategory.DescribeSituation(category)
+            : situation.Trim();
+
         var userText =
-            $"遊戲情境：{situation}。" +
+            $"遊戲情境：{describedSituation}。" +
             $"請針對這個情境，一次產生 {count} 句彼此不重複的誇獎。" +
             "每一句都要能單獨拿出來用，句型、開頭、語氣都要不一樣，不要用同一個模板換詞；" +
-            $"每句 12~25 個中文字，只能一句話、最多一個逗號，超過 {maxLength} 字的句子會被直接丟掉。" +
+            $"每句 {hintMin}~{hintMax} 個中文字，只能一句話、最多一個逗號，超過 {maxLength} 字的句子會被直接丟掉。" +
             "只輸出一個 JSON 陣列，陣列的每個元素是一個字串，就是一句誇獎；" +
             "不要輸出任何說明文字、不要 markdown 程式碼圍籬、不要鍵值物件。";
 
         var body = new
         {
-            systemInstruction = new { parts = new[] { new { text = SystemPrompt + LengthPrompt } } },
+            systemInstruction = new { parts = new[] { new { text = SystemPrompt + LengthPromptFor(hintMin, hintMax) } } },
             contents = new[] { new { role = "user", parts = new[] { new { text = userText } } } },
             generationConfig = new { temperature = 1.0, maxOutputTokens = 4096 },
         };

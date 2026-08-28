@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using Lumina.Excel.Sheets;
 
 namespace TataruPraise.Core;
 
@@ -24,6 +25,18 @@ public sealed class TriggerWatcher : IDisposable
     /// <summary>各職業上一次看到的等級。<b>沒有紀錄就不觸發</b>，見 <see cref="OnLevelChanged"/>。</summary>
     private readonly Dictionary<uint, uint> knownLevels = [];
 
+    /// <summary>
+    /// 已通關過的副本（ContentFinderCondition row id）；載入時從設定灌進來。
+    /// </summary>
+    /// <remarks>
+    /// 📌 設定檔存 <see cref="System.Collections.Generic.List{T}"/>（JSON 好讀好手改），
+    /// 執行期用 HashSet 比對——副本完成是低頻事件，但線性搜尋一份會長到幾百筆的清單沒有必要。
+    /// </remarks>
+    private readonly HashSet<uint> clearedDuties;
+
+    /// <summary>ContentFinderCondition 反查壞掉過就不再試，也只寫一次 log。</summary>
+    private bool contentLookupBroken;
+
     private DateTime lastGilPollUtc = DateTime.MinValue;
 
     /// <summary>上一次讀到的 Gil。<c>-1</c>＝還沒讀到過（登入後第一次讀不算里程碑）。</summary>
@@ -38,6 +51,7 @@ public sealed class TriggerWatcher : IDisposable
     {
         this.config = config;
         this.service = service;
+        clearedDuties = new HashSet<uint>(config.ClearedDuties);
 
         Svc.DutyState.DutyCompleted += OnDutyCompleted;
         Svc.ClientState.LevelChanged += OnLevelChanged;
@@ -58,10 +72,94 @@ public sealed class TriggerWatcher : IDisposable
         Svc.Framework.Update -= OnFrameworkUpdate;
     }
 
+    /// <summary>
+    /// 副本完成。<b>首次通關</b>走另一個機率。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <c>DutyCompleted</c> 給的是 <b>territory id</b>（Dalamud 直接轉發 <c>ClientState.TerritoryType</c>），
+    /// 不是 ContentFinderCondition 的 id。要判「這個副本我通關過沒有」必須先反查：
+    /// <c>TerritoryType</c> 表的 <c>ContentFinderCondition</c> 欄就是那個 RowRef。
+    /// <para>
+    /// 📌 台服 7.20 的資料離線對過（<c>exd-tc/7.20</c>）：territory 1039 → CFC 1「監獄廢墟托托·拉克千獄」，
+    /// 而 CFC 1 的 <c>TerritoryType</c> 欄也回 1039，雙向一致。非副本場景（例如 territory 128 利姆薩）
+    /// 的 <c>ContentFinderCondition</c> 是 0。
+    /// </para>
+    /// <para>
+    /// 🔴 反查不到（回 0、或表根本讀不到）就<b>照一般副本處理</b>：走原機率、也不記進已通關集合。
+    /// 查不到要走得下去，不可以崩、也不可以誤判成首通而每次都用 100%。
+    /// </para>
+    /// <para>
+    /// ⚠️ 「已通關」是<b>這個外掛自己記的</b>，不是遊戲的通關紀錄——老角色第一次跑舊副本照樣算首通。
+    /// 設定視窗的 tooltip 有寫清楚。
+    /// </para>
+    /// </remarks>
     private void OnDutyCompleted(object? sender, ushort territoryType)
     {
         if (!config.TriggerDutyComplete) return;
-        service.TryTrigger(PraiseCategory.DutyComplete);
+
+        var contentId = ResolveContentFinderCondition(territoryType, out var contentName);
+        if (contentId == 0)
+        {
+            Svc.Log.Information(
+                $"[TataruPraise] 副本完成：territory {territoryType} 反查不到 ContentFinderCondition，照一般副本處理。");
+            service.TryTrigger(PraiseCategory.DutyComplete);
+            return;
+        }
+
+        // 🔴 先記「通關過了」再擲骰：這件事跟有沒有出聲無關，機率沒中也不能讓它下次又算首通。
+        var firstClear = clearedDuties.Add(contentId);
+        if (firstClear)
+        {
+            config.ClearedDuties.Add(contentId);
+            config.Save();
+        }
+
+        var chance = firstClear
+            ? Math.Clamp(config.FirstClearChancePercent, 0, 100)
+            : Math.Clamp(config.ChancePercent, 0, 100);
+
+        var label = contentName.Length > 0 ? contentName : $"CFC {contentId}";
+        Svc.Log.Information(
+            $"[TataruPraise] 副本完成：{label}（CFC {contentId}）"
+            + $"，{(firstClear ? "首次通關" : "先前通關過")}，這次用 {chance}% 機率。");
+
+        service.TryTrigger(PraiseCategory.DutyComplete, chance);
+    }
+
+    /// <summary>
+    /// territory id → ContentFinderCondition row id。查不到回 0。
+    /// </summary>
+    /// <remarks>
+    /// 📌 純 Lumina 查表，沒有原生指標、沒有跨幀狀態，這裡的 <c>try/catch</c> 是有效的
+    /// （表不存在／欄位對不上時 Lumina 擲的是一般的受控例外）。
+    /// <para>
+    /// 🔴 失敗只發生一次就永久停用反查（<see cref="contentLookupBroken"/>）：每次通關都重試一次
+    /// 只會洗掉實機記錄檔，而記錄檔是事後唯一的診斷來源。停用之後所有副本都走一般機率。
+    /// </para>
+    /// </remarks>
+    private uint ResolveContentFinderCondition(ushort territoryType, out string name)
+    {
+        name = string.Empty;
+        if (contentLookupBroken) return 0;
+
+        try
+        {
+            var row = Svc.Data.GetExcelSheet<TerritoryType>().GetRowOrDefault(territoryType);
+            if (row == null) return 0;
+
+            var reference = row.Value.ContentFinderCondition;
+            if (reference.RowId == 0) return 0;
+
+            name = reference.ValueNullable?.Name.ExtractText() ?? string.Empty;
+            return reference.RowId;
+        }
+        catch (Exception ex)
+        {
+            contentLookupBroken = true;
+            Svc.Log.Information(
+                $"[TataruPraise] 反查 ContentFinderCondition 失敗，首次通關加權已停用（重載外掛才會再試）：{ex.Message}");
+            return 0;
+        }
     }
 
     /// <summary>
@@ -97,7 +195,26 @@ public sealed class TriggerWatcher : IDisposable
         lastGil = -1;
 
         if (!config.TriggerLogin) return;
-        service.TryTrigger(PraiseCategory.Login);
+
+        if (!config.LoginOncePerDay)
+        {
+            service.TryTrigger(PraiseCategory.Login);
+            return;
+        }
+
+        // 🔴 日期戳只在「真的出聲了」之後才寫。冷卻擋掉、機率沒中、池裡沒有已合成的句子——
+        //    這些都不算今天誇過了，不然一次沒中就整天都不會有。
+        var today = Configuration.TodayStamp();
+        if (string.Equals(config.LastLoginPraiseDate, today, StringComparison.Ordinal))
+        {
+            Svc.Log.Information($"[TataruPraise] 登入誇獎：今天（{today}）已經誇過了，這次略過。");
+            return;
+        }
+
+        if (!service.TryTrigger(PraiseCategory.Login)) return;
+
+        config.LastLoginPraiseDate = today;
+        config.Save();
     }
 
     private void OnLogout(int type, int code)

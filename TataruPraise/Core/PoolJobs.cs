@@ -98,7 +98,7 @@ public sealed class PoolJobs : IDisposable
         }
 
         var count = ClampedGenerateCount();
-        var maxLength = ClampedMaxLength();
+        var maxLength = config.MaxLengthOf(category);
 
         return Start($"生成「{category}」", category, async token =>
         {
@@ -135,14 +135,16 @@ public sealed class PoolJobs : IDisposable
     {
         if (IsRunning) return false;
 
-        var max = ClampedMaxLength();
+        // 🔴 上限逐情境問：UI 顯示「有 N 句超長」用的是同一個 resolver，
+        //    這裡換一把尺就會變成「顯示 3 句、刪掉 5 句」。
+        var max = config.ClampedMaxPraiseLength;
         return Start("移除超長句子", string.Empty, _ =>
         {
-            var removed = pool.RemoveLongerThan(max, out var wavs);
+            var removed = pool.RemoveLongerThan(config.MaxLengthOf, out var wavs);
             return Task.FromResult(
                 removed == 0
-                    ? $"移除超長句子：池裡沒有超過 {max} 字的句子，什麼都沒動。"
-                    : $"移除超長句子：刪掉 {removed} 句、連帶刪掉 {wavs} 個語音快取（上限 {max} 字）。");
+                    ? $"移除超長句子：池裡沒有超過各情境上限的句子，什麼都沒動（全域上限 {max} 字）。"
+                    : $"移除超長句子：刪掉 {removed} 句、連帶刪掉 {wavs} 個語音快取（全域上限 {max} 字，通知／警示情境另有自己的上限）。");
         });
     }
 
@@ -176,10 +178,6 @@ public sealed class PoolJobs : IDisposable
                 + "內建句子還沒有語音，記得按「預合成語音快取」。");
         });
     }
-
-    /// <summary>句長上限（夾在 UI 滑桿的範圍內；設定檔被手改成離譜的值也不會炸）。</summary>
-    private int ClampedMaxLength()
-        => Math.Clamp(config.MaxPraiseLength, PraiseText.SliderMin, PraiseText.SliderMax);
 
     /// <summary>
     /// 每個情境要生幾句。
@@ -251,8 +249,11 @@ public sealed class PoolJobs : IDisposable
     {
         token.ThrowIfCancellationRequested();
 
+        // 📌 situation ＝ 使用者在設定視窗填的「情境描述」（沒填就退回內建預設／鍵名）。
         var lines = await GeminiClient
-            .GenerateAsync(config.GeminiApiKey, config.GeminiModel, category, count, maxLength, token, stats)
+            .GenerateAsync(
+                config.GeminiApiKey, config.GeminiModel, category, config.SituationOf(category),
+                count, maxLength, token, stats)
             .ConfigureAwait(false);
 
         var added = pool.AddLines(category, lines, out var duplicates);
@@ -292,7 +293,6 @@ public sealed class PoolJobs : IDisposable
     private async Task<string> ExpandPoolAsync(CancellationToken token)
     {
         var count = ClampedGenerateCount();
-        var maxLength = ClampedMaxLength();
         var categories = pool.Categories();
 
         var total = 0;
@@ -312,7 +312,7 @@ public sealed class PoolJobs : IDisposable
             int added;
             try
             {
-                added = await ExpandCategoryAsync(category, count, maxLength, one, token).ConfigureAwait(false);
+                added = await ExpandCategoryAsync(category, count, config.MaxLengthOf(category), one, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -337,7 +337,7 @@ public sealed class PoolJobs : IDisposable
         // 🔴 被過濾掉的數字要跟著結果一起回去：全部被丟掉的時候，「一句都沒加」與
         // 「生了 40 句但全都太長」是完全不同的兩件事，使用者要能分得出來。
         var dropped = stats.Describe();
-        var droppedSuffix = dropped.Length > 0 ? $"（{dropped}，上限 {maxLength} 字）" : string.Empty;
+        var droppedSuffix = dropped.Length > 0 ? $"（{dropped}；上限逐情境，全域 {config.ClampedMaxPraiseLength} 字）" : string.Empty;
         var failureSuffix = failures > 0 ? $"　有 {failures} 個情境整個失敗（詳見記錄檔）。" : string.Empty;
 
         if (total == 0)

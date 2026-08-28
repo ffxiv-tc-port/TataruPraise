@@ -50,18 +50,32 @@ public sealed class PraiseService : IDisposable
     /// <summary>總開關開著、而且真的有可播的內容。</summary>
     public bool IsAvailable() => config.Enabled && pool.HasAnyCached();
 
-    /// <summary>遊戲事件觸發的路徑：吃冷卻也吃機率。</summary>
-    public bool TryTrigger(string category)
+    /// <summary>
+    /// 遊戲事件觸發的路徑：吃冷卻也吃機率。
+    /// </summary>
+    /// <param name="category">情境。</param>
+    /// <param name="chanceOverride">
+    /// 這一次要用的機率（%）。<c>null</c>＝用 <see cref="Configuration.ChancePercent"/>。
+    /// </param>
+    /// <remarks>
+    /// 📌 <paramref name="chanceOverride"/> 是給「首次通關」用的：同一個事件、同一個情境，
+    /// 但這一次的機率不一樣。<b>不要</b>為此另開一個情境——情境是 pool.json 的鍵，
+    /// 多開一個等於使用者要多養一池句子。
+    /// </remarks>
+    public bool TryTrigger(string category, int? chanceOverride = null)
     {
         if (!config.Enabled) return false;
         if (CooldownRemainingSeconds > 0) return false;
 
-        var chance = Math.Clamp(config.ChancePercent, 0, 100);
+        var chance = Math.Clamp(chanceOverride ?? config.ChancePercent, 0, 100);
         if (chance <= 0) return false;
         if (chance < 100 && Random.Shared.Next(100) >= chance) return false;
 
         return PlayFromPool(category);
     }
+
+    /// <summary>這個情境存在嗎（IPC 要分得出「未知情境」與「有情境但沒句子」）。</summary>
+    public bool HasCategory(string category) => pool.HasCategory(category);
 
     /// <summary>IPC <c>TataruPraise.Praise</c>：無視事件開關與機率，但吃冷卻。</summary>
     public bool Praise(string category)

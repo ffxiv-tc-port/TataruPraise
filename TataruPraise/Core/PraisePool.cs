@@ -93,12 +93,39 @@ public sealed class PraisePool
             Svc.Log.Information($"[TataruPraise] 讀取誇獎池失敗，改用空池：{ex.Message}");
         }
 
+        var seededKeys = new List<string>();
+        var seededLines = 0;
         lock (gate)
         {
             pool = loaded ?? [];
+
+            // 🔴 內建情境缺席時要「帶著內建句」補進來，不是補一個空陣列。
+            //    版本更新新增的內建情境（潛艇／製作／宇宙）在既有使用者的 pool.json 裡沒有這個鍵，
+            //    補成空陣列的話 IPC 呼叫端永遠拿到 false，而且完全沒有錯誤訊息——是靜默的沒作用。
             foreach (var key in PraiseCategory.All)
-                pool.TryAdd(key, []);
+            {
+                if (pool.ContainsKey(key)) continue;
+
+                var seeded = new List<PraiseLine>();
+                if (DefaultPool.Lines.TryGetValue(key, out var defaults))
+                {
+                    foreach (var text in defaults) seeded.Add(new PraiseLine { Text = text });
+                }
+
+                pool[key] = seeded;
+                seededKeys.Add(key);
+                seededLines += seeded.Count;
+            }
         }
+
+        if (seededKeys.Count == 0) return;
+
+        // 🔴 立刻寫回去：不存的話，使用者這一輪按「生成」以外的任何操作都可能把新鍵洗掉，
+        //    而且下次啟動又要再補一次（看起來像沒生效）。
+        Save();
+        Svc.Log.Information(
+            $"[TataruPraise] 誇獎池補進新的內建情境：{string.Join("、", seededKeys)}"
+            + $"（共 {seededLines} 句內建句）。這些句子還沒有語音，要按一次「合成」。");
     }
 
     /// <summary>存檔。失敗只寫 Information，不擲例外。</summary>
@@ -204,17 +231,25 @@ public sealed class PraisePool
         return added;
     }
 
-    /// <summary>整池有幾句超過 <paramref name="maxLength"/> 字（不含空白）。</summary>
-    public int CountLongerThan(int maxLength)
+    /// <summary>
+    /// 整池有幾句超過上限（不含空白）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 上限是<b>逐情境</b>問出來的（<paramref name="maxForCategory"/>）：情境可以各自覆寫上限，
+    /// 拿全域上限一把尺量整池，會讓 UI 顯示的「有 N 句超長」跟按下去實際會刪的句數對不上。
+    /// 顯示與刪除必須用同一個 resolver。
+    /// </remarks>
+    public int CountLongerThan(Func<string, int> maxForCategory)
     {
         lock (gate)
         {
             var n = 0;
-            foreach (var list in pool.Values)
+            foreach (var (category, list) in pool)
             {
+                var max = maxForCategory(category);
                 foreach (var line in list)
                 {
-                    if (PraiseText.CountChars(line.Text) > maxLength) n++;
+                    if (PraiseText.CountChars(line.Text) > max) n++;
                 }
             }
 
@@ -223,7 +258,7 @@ public sealed class PraisePool
     }
 
     /// <summary>
-    /// 把整池裡超過 <paramref name="maxLength"/> 字的句子刪掉，連同它們的語音快取。
+    /// 把整池裡超過<b>該情境上限</b>的句子刪掉，連同它們的語音快取。
     /// 回傳刪掉幾句，<paramref name="deletedWavs"/> 回傳實際刪掉幾個 WAV 檔。
     /// </summary>
     /// <remarks>
@@ -235,7 +270,7 @@ public sealed class PraisePool
     /// 只有到播不出聲的時候才發現）。
     /// </para>
     /// </remarks>
-    public int RemoveLongerThan(int maxLength, out int deletedWavs)
+    public int RemoveLongerThan(Func<string, int> maxForCategory, out int deletedWavs)
     {
         var removedTexts = new HashSet<string>();
         var removedCount = 0;
@@ -243,11 +278,12 @@ public sealed class PraisePool
 
         lock (gate)
         {
-            foreach (var list in pool.Values)
+            foreach (var (category, list) in pool)
             {
+                var max = maxForCategory(category);
                 for (var i = list.Count - 1; i >= 0; i--)
                 {
-                    if (PraiseText.CountChars(list[i].Text) <= maxLength) continue;
+                    if (PraiseText.CountChars(list[i].Text) <= max) continue;
                     removedTexts.Add(list[i].Text);
                     list.RemoveAt(i);
                     removedCount++;
@@ -282,7 +318,7 @@ public sealed class PraisePool
             }
         }
 
-        Svc.Log.Information($"[TataruPraise] 移除超過 {maxLength} 字的句子 {removedCount} 句，刪掉 {deletedWavs} 個語音快取。");
+        Svc.Log.Information($"[TataruPraise] 移除超過各情境上限的句子 {removedCount} 句，刪掉 {deletedWavs} 個語音快取。");
         return removedCount;
     }
 
@@ -304,6 +340,66 @@ public sealed class PraisePool
         }
 
         if (changed) Save();
+    }
+
+    /// <summary>這個情境存在嗎（IPC 收到未知情境時要分得出「沒有這個鍵」與「有鍵但沒句子」）。</summary>
+    public bool HasCategory(string category)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return false;
+        lock (gate) return pool.ContainsKey(category);
+    }
+
+    /// <summary>
+    /// 新增一個自訂情境（空的）。已經有同名的鍵就回 <c>false</c> 且什麼都不動。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 比對是 <b>ordinal 完全相同</b>：情境名同時是 pool.json 的鍵與 IPC 的參數，
+    /// 「大小寫不同算同一個」在那兩個地方都不成立，這裡放寬只會製造對不上的鍵。
+    /// </remarks>
+    public bool AddCategory(string category)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return false;
+
+        var name = category.Trim();
+        lock (gate)
+        {
+            if (pool.ContainsKey(name)) return false;
+            pool[name] = [];
+        }
+
+        Save();
+        Svc.Log.Information($"[TataruPraise] 新增情境「{name}」。");
+        return true;
+    }
+
+    /// <summary>
+    /// 刪掉一個自訂情境，連同它底下的句子。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>內建情境刪不掉</b>（回 <c>false</c>）：<see cref="Load"/> 下次啟動又會把它補回來，
+    /// 對使用者是「刪了又出現」的鬼打牆。UI 那邊也不畫刪除鈕，這裡是第二道閘門。
+    /// <para>
+    /// 🔴 <b>刻意不刪語音快取。</b>WAV 是用句子雜湊命名的，同一句可能還掛在別的情境底下；
+    /// 而且使用者把情境刪掉再加回來的時候，留著的快取可以直接重用。
+    /// 孤兒 WAV 由「重置為預設池」或使用者自己清。
+    /// </para>
+    /// </remarks>
+    public bool RemoveCategory(string category, out int removedLines)
+    {
+        removedLines = 0;
+        if (string.IsNullOrWhiteSpace(category)) return false;
+        if (PraiseCategory.IsBuiltIn(category)) return false;
+
+        lock (gate)
+        {
+            if (!pool.TryGetValue(category, out var list)) return false;
+            removedLines = list.Count;
+            pool.Remove(category);
+        }
+
+        Save();
+        Svc.Log.Information($"[TataruPraise] 刪除情境「{category}」（連同 {removedLines} 句；語音快取保留）。");
+        return true;
     }
 
     /// <summary>某個情境目前有幾句。</summary>
@@ -565,8 +661,10 @@ public sealed class PraisePool
             availabilityCheckedUtc = now;
         }
 
+        // 📌 走 Categories() 而不是 PraiseCategory.All：自訂情境也算「有東西可播」，
+        //    只數內建的會讓「整池只有自訂情境有語音」的人拿到 IsAvailable=false。
         var any = false;
-        foreach (var category in PraiseCategory.All)
+        foreach (var category in Categories())
         {
             if (PickCached(category) == null) continue;
             any = true;

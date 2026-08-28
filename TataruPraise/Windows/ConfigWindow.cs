@@ -114,6 +114,29 @@ public sealed class ConfigWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("來源是 Dalamud 的 IDutyState.DutyCompleted，不是聊天訊息比對。");
 
+        ImGui.Indent();
+        var firstClear = Config.FirstClearChancePercent;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt("首次通關機率（%）##firstClear", ref firstClear, 0, 100))
+        {
+            Config.FirstClearChancePercent = Math.Clamp(firstClear, 0, 100);
+            Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "第一次通關某個副本時改用這個機率（其他副本走下面的「觸發機率」）。\n"
+                + "想關掉這個加權就把它調成跟「觸發機率」一樣。\n"
+                + "🔴 「通關過沒有」是這個外掛自己記的，不是遊戲的通關紀錄——\n"
+                + "裝外掛之前跑過的副本，第一次再跑照樣會算成首次通關。\n"
+                + "反查不到副本資料的場景一律當一般副本處理。");
+        }
+
+        ImGui.TextColored(ColorUnknown, $"已記錄 {Config.ClearedDuties.Count} 個通關過的副本");
+        ImGui.Unindent();
+
+
         var level = Config.TriggerLevelUp;
         if (ImGui.Checkbox("升等", ref level)) { Config.TriggerLevelUp = level; Config.Save(); }
         if (ImGui.IsItemHovered())
@@ -125,6 +148,30 @@ public sealed class ConfigWindow : Window
 
         var login = Config.TriggerLogin;
         if (ImGui.Checkbox("登入", ref login)) { Config.TriggerLogin = login; Config.Save(); }
+
+        ImGui.Indent();
+        var loginOnce = Config.LoginOncePerDay;
+        if (ImGui.Checkbox("只在當天第一次登入##loginOnce", ref loginOnce))
+        {
+            Config.LoginOncePerDay = loginOnce;
+            Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "以本機日期算「今天」。關掉就退回每次登入都試一次。\n"
+                + "📌 日期只在真的出聲之後才記——冷卻擋掉、機率沒中、池裡沒有已合成的句子，\n"
+                + "都不算今天用掉了，換角色重登還是有機會聽到。");
+        }
+
+        if (Config.LastLoginPraiseDate.Length > 0)
+            ImGui.TextColored(ColorUnknown, $"上次登入誇獎：{Config.LastLoginPraiseDate}");
+        else
+            ImGui.TextColored(ColorUnknown, "上次登入誇獎：（還沒有過）");
+
+        ImGui.Unindent();
+
 
         var gil = Config.TriggerGilMilestone;
         if (ImGui.Checkbox("Gil 里程碑", ref gil)) { Config.TriggerGilMilestone = gil; Config.Save(); }
@@ -329,6 +376,30 @@ public sealed class ConfigWindow : Window
     /// <summary>池裡超過目前句長上限的句數（跟著上面的統計一起、每秒重算一次）。</summary>
     private int overLimitCount;
 
+    /// <summary>「新增情境」輸入框的內容。</summary>
+    private string newCategoryName = string.Empty;
+
+    /// <summary>「新增情境」上一次失敗的原因（畫在列上，不藏 tooltip）。</summary>
+    private string newCategoryError = string.Empty;
+
+    /// <summary>正在展開編輯哪一個情境的描述（空字串＝沒有展開）。</summary>
+    private string editingCategory = string.Empty;
+
+    /// <summary>編輯中的描述草稿。<b>按「儲存」才寫進設定</b>，按「取消」整份丟掉。</summary>
+    private string editingDescription = string.Empty;
+
+    /// <summary>編輯中的句長上限覆寫草稿（0＝沿用預設／全域）。</summary>
+    private int editingMaxLength;
+
+    /// <summary>
+    /// 已經按過第一下「刪除」的情境（空字串＝沒有）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 刪情境會連它底下的句子一起刪掉，<b>不可回復</b>，所以是兩段式：
+    /// 第一下只是把確認列展開，第二下才真的動 pool.json。
+    /// </remarks>
+    private string pendingDeleteCategory = string.Empty;
+
     /// <summary>「移除超過上限的句子」按過第一下了嗎（第二下才真的刪）。</summary>
     private bool prunePending;
 
@@ -370,7 +441,9 @@ public sealed class ConfigWindow : Window
         foreach (var category in categoryList)
             statsCache[category] = (plugin.Pool.CountOf(category), plugin.Pool.CachedCountOf(category));
 
-        overLimitCount = plugin.Pool.CountLongerThan(ClampedMaxLength());
+        // 🔴 逐情境問上限：通知情境有自己的（較短的）上限，
+        //    拿全域上限量整池會讓「有 N 句超長」跟按下去實際刪的數量對不上。
+        overLimitCount = plugin.Pool.CountLongerThan(Config.MaxLengthOf);
     }
 
     /// <summary>設定裡的句長上限，夾在滑桿範圍內（設定檔被手改成離譜的值也不會讓 UI 壞掉）。</summary>
@@ -417,13 +490,18 @@ public sealed class ConfigWindow : Window
                 + "所以結果行印的是「要 N 句、新增 M 句」。");
         }
 
-        if (ImGui.BeginTable("##poolStats", 5, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+        DrawAddCategory();
+
+        if (ImGui.BeginTable("##poolStats", 8, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
         {
             ImGui.TableSetupColumn("情境");
+            ImGui.TableSetupColumn("情境描述");
+            ImGui.TableSetupColumn("句長上限");
             ImGui.TableSetupColumn("句數");
             ImGui.TableSetupColumn("已有語音");
             ImGui.TableSetupColumn("生成");
             ImGui.TableSetupColumn("語音");
+            ImGui.TableSetupColumn("刪除");
             ImGui.TableHeadersRow();
 
             var customCount = 0;
@@ -431,26 +509,70 @@ public sealed class ConfigWindow : Window
             for (var i = 0; i < categoryList.Count; i++)
             {
                 var category = categoryList[i];
-                var custom = Array.IndexOf(PraiseCategory.All, category) < 0;
-                if (custom) customCount++;
+                var builtIn = PraiseCategory.IsBuiltIn(category);
+                if (!builtIn) customCount++;
 
                 var (total, cached) = statsCache.TryGetValue(category, out var s) ? s : (0, 0);
 
                 ImGui.TableNextRow();
 
                 ImGui.TableNextColumn();
-                ImGui.TextUnformatted(custom ? category + " *" : category);
-                if (custom && ImGui.IsItemHovered())
+                ImGui.TextUnformatted(builtIn ? category : category + " *");
+                if (!builtIn && ImGui.IsItemHovered())
                 {
                     ImGui.SetTooltip(
-                        "pool.json 裡的自訂情境，這一版沒有對應的遊戲觸發來源。\n"
-                        + "照樣可以生成與合成，也可以用 IPC 指定這個情境播。");
+                        "自訂情境，沒有內建的遊戲觸發來源。\n"
+                        + $"照樣可以生成與合成，也可以用 IPC TataruPraise.Praise(\"{category}\") 指定它播。");
                 }
 
                 if (running && runningCategory == category)
                 {
                     ImGui.SameLine();
                     ImGui.TextColored(ColorUnknown, "（進行中）");
+                }
+
+                // ── 情境描述：列上截斷、完整放 tooltip、按「編輯」展開多行 ──
+                ImGui.TableNextColumn();
+                var description = Config.DescriptionOf(category);
+                if (description.Length == 0)
+                {
+                    // 🔴 「沒有描述」要在列上看得見：生句時只能拿鍵名當線索，句子會空泛。
+                    ImGui.TextColored(ColorUnknown, "（沒有描述）");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("這個情境沒有描述，生句時只能用情境名當線索。按「編輯」補一段。");
+                }
+                else
+                {
+                    ImGui.TextUnformatted(Truncate(description, DescriptionPreviewChars));
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.PushTextWrapPos(ImGui.GetFontSize() * 22f);
+                        ImGui.SetTooltip(description);
+                        ImGui.PopTextWrapPos();
+                    }
+                }
+
+                ImGui.SameLine();
+                if (ImGui.Button($"編輯##desc-{i}"))
+                    BeginEditCategory(category);
+
+                // ── 句長上限：沿用的畫灰、覆寫過的畫正常 ──
+                ImGui.TableNextColumn();
+                var effectiveMax = Config.MaxLengthOf(category);
+                var overridden = Config.HasMaxLengthOverride(category)
+                                 || PraiseCategory.DefaultMaxLength(category) > 0;
+                if (overridden)
+                    ImGui.TextUnformatted(effectiveMax.ToString());
+                else
+                    ImGui.TextColored(ColorUnknown, effectiveMax.ToString());
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        overridden
+                            ? $"這個情境自己的句長上限是 {effectiveMax} 字（全域是 {Config.ClampedMaxPraiseLength} 字）。\n"
+                              + "生成時提示詞要的字數也會跟著這個數字調整。按「編輯」可以改。"
+                            : $"沿用全域上限 {effectiveMax} 字。按「編輯」可以只為這個情境設一個不一樣的上限。");
                 }
 
                 ImGui.TableNextColumn();
@@ -474,6 +596,7 @@ public sealed class ConfigWindow : Window
                 {
                     ImGui.SetTooltip(
                         $"只對「{category}」發一次 Gemini 請求，要 {effectiveCount} 句，只寫這一個情境。\n"
+                        + $"上限 {effectiveMax} 字，提示詞會照這個上限要短句。\n"
                         + "其他情境完全不動。新句子還沒有語音，要再按同一列的「合成」。");
                 }
 
@@ -491,13 +614,43 @@ public sealed class ConfigWindow : Window
                             ? $"把「{category}」還缺語音的 {missing} 句送去橋接合成（可能要跑好幾分鐘）。"
                             : $"「{category}」目前沒有缺語音的句子。");
                 }
+
+                // ── 刪除：內建情境沒有這顆按鈕 ──
+                ImGui.TableNextColumn();
+                if (builtIn)
+                {
+                    ImGui.TextDisabled("內建");
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip(
+                            "內建情境刪不掉：下次啟動會再被補回來（連同內建句），刪了等於白刪。\n"
+                            + "不想聽到它的話，把對應的觸發關掉、或把句子清空就好。");
+                    }
+                }
+                else
+                {
+                    ImGui.BeginDisabled(running);
+                    if (ImGui.Button($"刪除##del-{i}"))
+                    {
+                        pendingDeleteCategory = category;
+                        editingCategory = string.Empty;
+                    }
+
+                    ImGui.EndDisabled();
+
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"刪掉「{category}」與它底下的 {total} 句。按下去之後還會再確認一次。");
+                }
             }
 
             ImGui.EndTable();
 
             if (customCount > 0)
-                ImGui.TextDisabled("* ＝ pool.json 裡的自訂情境，這一版沒有遊戲觸發來源。");
+                ImGui.TextDisabled("* ＝ 自訂情境（沒有內建觸發來源，靠 IPC 或手動叫）。");
         }
+
+        DrawDeleteCategoryConfirm();
+        DrawCategoryEditor();
 
         ImGui.Spacing();
         DrawResetPool();
@@ -505,6 +658,229 @@ public sealed class ConfigWindow : Window
         ImGui.TextDisabled("池與語音快取的位置");
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip($"{plugin.Pool.PoolPath}\n{plugin.Pool.CacheDirectory}");
+    }
+
+    /// <summary>情境描述在表格列上最多顯示幾個字（其餘收進 tooltip）。</summary>
+    private const int DescriptionPreviewChars = 14;
+
+    /// <summary>情境名的長度上限（避免有人貼一整段話進去把表格撐爆）。</summary>
+    private const int CategoryNameMaxChars = 20;
+
+    /// <summary>把長字串截短成「前 N 個字…」。</summary>
+    private static string Truncate(string text, int maxChars)
+        => text.Length <= maxChars ? text : text[..maxChars] + "…";
+
+    /// <summary>
+    /// 「新增情境」：輸入鍵名 → 建一個空情境。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 情境名同時是 <c>pool.json</c> 的鍵與 IPC <c>Praise</c> 的參數，所以：
+    /// ①比對是 ordinal 完全相同（不做大小寫寬鬆）②不可以跟既有的重複
+    /// ③失敗原因寫在列上，不藏 tooltip——按了沒反應是最糟的回饋。
+    /// </remarks>
+    private void DrawAddCategory()
+    {
+        var running = plugin.Jobs.IsRunning;
+
+        var name = newCategoryName;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.InputText("##newCategory", ref name, 64))
+        {
+            newCategoryName = name;
+            newCategoryError = string.Empty;
+        }
+
+        ImGui.SameLine();
+        ImGui.BeginDisabled(running);
+        if (ImGui.Button("新增情境##addCategory"))
+            TryAddCategory();
+        ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "建一個新的（空的）情境。建好之後用同一列的「生成」生句、「合成」做語音。\n"
+                + "別的外掛可以用 IPC TataruPraise.Praise(\"情境名\") 指定播這個情境。\n"
+                + "情境名就是 pool.json 的鍵，大小寫與空白都算數。");
+        }
+
+        if (newCategoryError.Length > 0)
+            ImGui.TextColored(ColorBad, newCategoryError);
+    }
+
+    private void TryAddCategory()
+    {
+        var name = newCategoryName.Trim();
+        if (name.Length == 0)
+        {
+            newCategoryError = "情境名不能是空的。";
+            return;
+        }
+
+        if (name.Length > CategoryNameMaxChars)
+        {
+            newCategoryError = $"情境名太長了（最多 {CategoryNameMaxChars} 個字）。";
+            return;
+        }
+
+        if (plugin.Pool.HasCategory(name))
+        {
+            newCategoryError = $"「{name}」已經有了，不能重複。";
+            return;
+        }
+
+        if (!plugin.Pool.AddCategory(name))
+        {
+            newCategoryError = $"新增「{name}」失敗（詳見記錄檔）。";
+            return;
+        }
+
+        newCategoryName = string.Empty;
+        newCategoryError = string.Empty;
+        statsRefreshedUtc = DateTime.MinValue;
+        BeginEditCategory(name);
+    }
+
+    /// <summary>刪除情境的第二段確認（第一段是表格列上那顆「刪除」）。</summary>
+    /// <remarks>
+    /// 📌 確認文字把<b>會刪掉幾句</b>寫在列上——這是使用者按下去之前唯一的煞車。
+    /// 🔴 語音快取<b>不刪</b>：WAV 是用句子雜湊命名的，同一句可能還掛在別的情境底下。
+    /// </remarks>
+    private void DrawDeleteCategoryConfirm()
+    {
+        if (pendingDeleteCategory.Length == 0) return;
+
+        var category = pendingDeleteCategory;
+        if (!plugin.Pool.HasCategory(category))
+        {
+            pendingDeleteCategory = string.Empty;
+            return;
+        }
+
+        var count = statsCache.TryGetValue(category, out var s) ? s.Total : plugin.Pool.CountOf(category);
+
+        ImGui.Spacing();
+        ImGui.TextColored(ColorBad, $"再按一次確認：會刪掉情境「{category}」與它底下的 {count} 句，不可回復。");
+        ImGui.TextColored(ColorUnknown, "已經合成好的語音快取檔會留著（同一句可能還掛在別的情境底下）。");
+
+        ImGui.BeginDisabled(plugin.Jobs.IsRunning);
+        if (ImGui.Button($"確定刪除「{category}」##delConfirm"))
+        {
+            if (plugin.Pool.RemoveCategory(category, out var removed))
+            {
+                Config.CategoryDescriptions.Remove(category);
+                Config.CategoryMaxLength.Remove(category);
+                Config.Save();
+                Svc.Log.Information($"[TataruPraise] 已刪除情境「{category}」（連同 {removed} 句）。");
+            }
+
+            if (string.Equals(editingCategory, category, StringComparison.Ordinal))
+                editingCategory = string.Empty;
+
+            pendingDeleteCategory = string.Empty;
+            statsRefreshedUtc = DateTime.MinValue;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("先不要##delCancel"))
+            pendingDeleteCategory = string.Empty;
+
+        ImGui.EndDisabled();
+    }
+
+    private void BeginEditCategory(string category)
+    {
+        editingCategory = category;
+        editingDescription = Config.DescriptionOf(category);
+        editingMaxLength = Config.HasMaxLengthOverride(category) ? Config.MaxLengthOf(category) : 0;
+        pendingDeleteCategory = string.Empty;
+    }
+
+    /// <summary>
+    /// 展開的情境編輯器：多行描述 ＋ 句長上限覆寫。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 草稿<b>按「儲存」才寫進設定</b>。邊打邊存會讓「打到一半的描述」變成生句時真的用的那一段。
+    /// 📌 描述存在<b>設定檔</b>不是 pool.json——pool.json 只放句子，重置池的時候描述不會跟著被清掉。
+    /// </remarks>
+    private void DrawCategoryEditor()
+    {
+        if (editingCategory.Length == 0) return;
+
+        var category = editingCategory;
+        if (!plugin.Pool.HasCategory(category))
+        {
+            editingCategory = string.Empty;
+            return;
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextUnformatted($"編輯情境「{category}」");
+
+        var description = editingDescription;
+        ImGui.TextDisabled("情境描述（生句時餵給模型的那一段話）");
+        if (ImGui.InputTextMultiline(
+                "##editDescription", ref description, 1000,
+                new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeight() * 4f)))
+        {
+            editingDescription = description;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "會被寫成「遊戲情境：<這段話>。」送進模型。\n"
+                + "寫清楚「發生了什麼事」與「要多短」，生出來的句子才不會空泛。\n"
+                + "留空＝退回內建的預設描述；自訂情境留空就只能用情境名當線索。");
+        }
+
+        var maxLength = editingMaxLength;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.InputInt("句長上限覆寫（0＝沿用）##editMaxLength", ref maxLength, 1, 5))
+            editingMaxLength = Math.Clamp(maxLength, 0, PraiseText.SliderMax);
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                $"只給這個情境用的句長上限（字，不含空白）。0＝沿用全域的 {Config.ClampedMaxPraiseLength} 字。\n"
+                + "生成時提示詞要的字數範圍會跟著這個數字調整，硬過濾也照它走。\n"
+                + "通知型的情境（潛艇／製作／宇宙）內建就是 16 字，因為那是短通知不是誇獎。");
+        }
+
+        var effective = editingMaxLength > 0
+            ? Math.Clamp(editingMaxLength, PraiseText.MinLength, PraiseText.SliderMax)
+            : Config.MaxLengthOf(category);
+        var (hintMin, hintMax) = PraiseText.LengthHint(effective);
+        ImGui.TextColored(ColorUnknown, $"生成時會跟模型要 {hintMin}～{hintMax} 字，超過 {effective} 字的直接丟掉。");
+
+        if (ImGui.Button("儲存##editSave"))
+        {
+            Config.SetDescription(category, editingDescription);
+            Config.SetMaxLength(category, editingMaxLength);
+            editingCategory = string.Empty;
+            statsRefreshedUtc = DateTime.MinValue;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("取消##editCancel"))
+            editingCategory = string.Empty;
+
+        ImGui.SameLine();
+        if (ImGui.Button("還原成預設描述##editReset"))
+        {
+            editingDescription = PraiseCategory.DefaultDescription(category);
+            editingMaxLength = 0;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "把草稿換成內建的預設描述、上限改回沿用。\n"
+                + "還要按「儲存」才會生效。自訂情境沒有內建描述，會變成空的。");
+        }
+
+        ImGui.Separator();
     }
 
     /// <summary>

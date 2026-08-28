@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
 using Dalamud.Configuration;
 
 namespace TataruPraise;
@@ -48,6 +51,50 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Gil 里程碑的間隔：每跨過這個數字的整數倍就算一次里程碑。</summary>
     public long GilMilestoneStep { get; set; } = 1_000_000;
 
+    // ── 觸發前提補強 ───────────────────────────────────────────────
+    /// <summary>登入誇獎只在「當天第一次」出聲。</summary>
+    /// <remarks>
+    /// 📌 判準是<b>本機日期</b>（<see cref="DateTime.Now"/>），不是 UTC——使用者說的「今天」是他桌上那個今天。
+    /// <para>
+    /// 🔴 <see cref="LastLoginPraiseDate"/> 只在<b>真的出聲之後</b>才寫。冷卻擋掉、機率沒中、
+    /// 池裡沒有已合成的句子——這些情況都不算「今天誇過了」，不然一次沒中就整天都沒有了。
+    /// </para>
+    /// <para>
+    /// ⚠️ 關掉就退回舊行為：每次登入都試一次。
+    /// </para>
+    /// </remarks>
+    public bool LoginOncePerDay { get; set; } = true;
+
+    /// <summary>上一次因為登入而出聲的本機日期（<c>yyyy-MM-dd</c>）；還沒有過就是空字串。</summary>
+    public string LastLoginPraiseDate { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 「首次通關」的觸發機率（%）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 只有在<b>這個副本沒出現在 <see cref="ClearedDuties"/> 裡</b>的時候才用這個數字，
+    /// 其他副本照 <see cref="ChancePercent"/> 走。想關掉這個加權就把它調成跟 <see cref="ChancePercent"/> 一樣。
+    /// <para>
+    /// 🔴 反查不到 ContentFinderCondition（例如那個場景根本不是副本）時<b>一律當一般副本處理</b>，
+    /// 也不會記進 <see cref="ClearedDuties"/>。查不到就照常走，不會崩、也不會誤判成首通。
+    /// </para>
+    /// </remarks>
+    public int FirstClearChancePercent { get; set; } = 100;
+
+    /// <summary>
+    /// 已經通關過的副本（ContentFinderCondition 的 row id）。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 這份紀錄是<b>外掛裝了以後才開始累積的</b>，不是遊戲的通關紀錄——
+    /// 老角色第一次跑舊副本照樣會被算成「首次通關」。這點在設定視窗的 tooltip 裡寫給使用者看。
+    /// <para>
+    /// 📌 用 <see cref="List{T}"/> 存（設定檔是 JSON，陣列比集合好讀好手改）；
+    /// 執行期的比對走 <see cref="Core.TriggerWatcher"/> 裡那份 HashSet 快取，不對這個清單做線性搜尋。
+    /// </para>
+    /// </remarks>
+    public List<uint> ClearedDuties { get; set; } = [];
+
+
     // ── 語音橋接（GPT-SoVITS，預設同機）──────────────────────────────
     /// <summary>TTS 橋接位址。同機就是 127.0.0.1:9882；異機要填區網 IP 且對方要綁 0.0.0.0。</summary>
     public string TtsHost { get; set; } = "http://127.0.0.1:9882";
@@ -76,6 +123,102 @@ public sealed class Configuration : IPluginConfiguration
     /// 📌 預設 28＝提示詞要求的 25 字再加幾格標點的餘裕。
     /// </remarks>
     public int MaxPraiseLength { get; set; } = Core.PraiseText.DefaultMaxLength;
+
+    // ── 情境描述 ────────────────────────────────────────────────────
+    /// <summary>
+    /// 每個情境的「情境描述」——生句時餵給 Gemini 當 situation 的那一段話。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>存在設定檔，不存 pool.json</b>：pool.json 是句子的資料檔，使用者會自己打開來編、也會整份備份／重置，
+    /// 把描述混進去會在「重置為預設池」的時候一起被清掉。
+    /// <para>
+    /// 📌 只放<b>使用者改寫過</b>的；內建情境沒被改寫時這裡沒有鍵，取用時退回
+    /// <see cref="Core.PraiseCategory.Situations"/> 的預設描述。
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, string> CategoryDescriptions { get; set; } = [];
+
+    /// <summary>
+    /// 每個情境的「句長上限覆寫」（字，不含空白）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 空／0／沒有這個鍵＝<b>用全域的 <see cref="MaxPraiseLength"/></b>；
+    /// 沒有自訂時，內建的通知情境還有一層 <see cref="Core.PraiseCategory.MaxLengths"/> 的預設（16）。
+    /// 取用順序寫在 <see cref="MaxLengthOf"/>。
+    /// <para>
+    /// 🔴 覆寫的下界是 <see cref="Core.PraiseText.MinLength"/>（6），<b>不是</b> UI 全域滑桿的下界 12——
+    /// 短通知句本來就要比一般誇獎句短，拿全域滑桿的範圍去夾會讓覆寫根本填不下去。
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, int> CategoryMaxLength { get; set; } = [];
+
+    /// <summary>全域句長上限，夾在 UI 滑桿範圍內（設定檔被手改成離譜的值也不會讓 UI 壞掉）。</summary>
+    public int ClampedMaxPraiseLength
+        => Math.Clamp(MaxPraiseLength, Core.PraiseText.SliderMin, Core.PraiseText.SliderMax);
+
+    /// <summary>某個情境生效的句長上限：自訂覆寫 → 內建覆寫 → 全域上限。</summary>
+    public int MaxLengthOf(string category)
+    {
+        if (CategoryMaxLength.TryGetValue(category, out var custom) && custom > 0)
+            return Math.Clamp(custom, Core.PraiseText.MinLength, Core.PraiseText.SliderMax);
+
+        var builtin = Core.PraiseCategory.DefaultMaxLength(category);
+        if (builtin > 0) return builtin;
+
+        return Math.Clamp(MaxPraiseLength, Core.PraiseText.SliderMin, Core.PraiseText.SliderMax);
+    }
+
+    /// <summary>這個情境的上限是不是「自訂覆寫」來的（UI 要分得出「沿用」與「填了同一個數字」）。</summary>
+    public bool HasMaxLengthOverride(string category)
+        => CategoryMaxLength.TryGetValue(category, out var v) && v > 0;
+
+    /// <summary>設定某個情境的句長上限覆寫（0 或負數＝清掉覆寫，退回預設／全域）。</summary>
+    public void SetMaxLength(string category, int value)
+    {
+        if (value <= 0)
+            CategoryMaxLength.Remove(category);
+        else
+            CategoryMaxLength[category] = Math.Clamp(value, Core.PraiseText.MinLength, Core.PraiseText.SliderMax);
+
+        Save();
+    }
+
+    /// <summary>某個情境目前生效的描述；沒有自訂也沒有內建預設就回空字串。</summary>
+    public string DescriptionOf(string category)
+    {
+        if (CategoryDescriptions.TryGetValue(category, out var custom) && !string.IsNullOrWhiteSpace(custom))
+            return custom.Trim();
+
+        return Core.PraiseCategory.DefaultDescription(category);
+    }
+
+    /// <summary>
+    /// 餵給文字後端的情境句：自訂描述 → 內建預設描述 → 用鍵名組一句。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 第三段退路不可以省。使用者自己新增的情境如果沒填描述，這裡回空字串會讓提示詞變成
+    /// 「遊戲情境：。」——模型會開始自由發揮，而失敗形狀是「句子看起來沒問題但跟情境無關」。
+    /// </remarks>
+    public string SituationOf(string category)
+    {
+        var described = DescriptionOf(category);
+        return described.Length > 0 ? described : Core.PraiseCategory.DescribeSituation(category);
+    }
+
+    /// <summary>把某個情境的描述寫進設定（空字串＝清掉自訂，退回內建預設）。</summary>
+    public void SetDescription(string category, string? description)
+    {
+        var trimmed = description?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            CategoryDescriptions.Remove(category);
+        else
+            CategoryDescriptions[category] = trimmed;
+
+        Save();
+    }
+
+    /// <summary>今天的本機日期字串（<c>yyyy-MM-dd</c>）——登入誇獎的「當天」判準。</summary>
+    public static string TodayStamp() => DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
