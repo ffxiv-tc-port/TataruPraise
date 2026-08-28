@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+
+# 🔴 金鑰絕不進版控。Gemini API key 存在 Dalamud 的外掛設定檔裡
+#    （%AppData%\...\Dalamud\Config\pluginConfigs\TataruPraise.json），不在本 repo。
+#    下面這幾條只是防呆：任何人手動放金鑰檔進來都不會被追蹤。
+*.key
+.gemini_key
+*.gemini_key
+secrets.json

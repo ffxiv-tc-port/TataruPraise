@@ -1,0 +1,22 @@
+{
+  "Author": "ffxiv-tc-port",
+  "Name": "塔塔露誇獎",
+  "InternalName": "TataruPraise",
+  "AssemblyVersion": "7.20.0.0",
+  "Description": "偶爾用塔塔露的聲音誇獎你。副本完成、升等、登入、Gil 里程碑這幾種情境各自獨立開關（預設全部關閉），命中後從本機的誇獎池挑一句、播放事先合成好的語音檔，執行期完全不連網。語音來自本機的 GPT-SoVITS 橋接（預設 http://127.0.0.1:9882），沒有橋接就只是不出聲，不會卡遊戲。設定視窗裡可以用 Gemini 批量擴充誇獎池，以及把整池預先合成成語音快取。指令 /tataru 開啟設定視窗，/tataru test 試播一句。",
+  "ApplicableVersion": "any",
+  "RepoUrl": "https://github.com/ffxiv-tc-port/TataruPraise",
+  "Tags": [
+    "TC",
+    "Audio",
+    "TTS",
+    "Fun"
+  ],
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "LoadPriority": 0,
+  "IconUrl": "https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/icons/TataruPraise.png",
+  "Punchline": "偶爾用塔塔露的聲音誇你一句，純本機、預設全關。",
+  "AcceptsFeedback": false,
+  "DalamudApiLevel": 13
+}

@@ -1,0 +1,139 @@
+using System;
+using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
+using Dalamud.Plugin;
+using TataruPraise.Core;
+using TataruPraise.Windows;
+
+namespace TataruPraise;
+
+public sealed class Plugin : IDalamudPlugin
+{
+    public const string Command = "/tataru";
+
+    public Configuration Config { get; }
+
+    public PraisePool Pool { get; }
+
+    public PraiseService Service { get; }
+
+    public PoolJobs Jobs { get; }
+
+    public WindowSystem WindowSystem { get; } = new("TataruPraise");
+
+    /// <summary>試播的最後結果（設定視窗上顯示）。</summary>
+    public string LastTestMessage { get; private set; } = string.Empty;
+
+    private readonly ConfigWindow configWindow;
+    private readonly TriggerWatcher triggers;
+    private readonly IpcProvider ipc;
+
+    public Plugin(IDalamudPluginInterface pluginInterface)
+    {
+        pluginInterface.Create<Svc>();
+
+        Config = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        Pool = new PraisePool();
+        Pool.Load();
+        if (Pool.SeedIfEmpty())
+            Svc.Log.Information("[TataruPraise] 誇獎池是空的，已灌入內建的預設句。");
+
+        Service = new PraiseService(Config, Pool);
+        Jobs = new PoolJobs(Config, Pool);
+        triggers = new TriggerWatcher(Config, Service);
+        ipc = new IpcProvider(Service);
+
+        configWindow = new ConfigWindow(this);
+        WindowSystem.AddWindow(configWindow);
+
+        Svc.PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+        Svc.PluginInterface.UiBuilder.OpenConfigUi += ToggleConfig;
+        Svc.PluginInterface.UiBuilder.OpenMainUi += ToggleConfig;
+
+        Svc.Commands.AddHandler(Command, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "開啟塔塔露誇獎的設定視窗。/tataru test 試播一句。",
+        });
+
+        LogStartupState();
+    }
+
+    /// <summary>
+    /// 啟動狀態。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 一律 <c>Information</c> 級：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+    /// 這一行回答的是事後看記錄檔時唯一推不出來的事——「總開關到底開著沒、有哪幾個觸發是開的、
+    /// 池裡到底有沒有可播的東西」。<b>「有句子」與「有語音」是兩件事</b>，所以兩個數字都印。
+    /// </remarks>
+    private void LogStartupState()
+    {
+        var triggerNames = new System.Collections.Generic.List<string>();
+        if (Config.TriggerDutyComplete) triggerNames.Add(PraiseCategory.DutyComplete);
+        if (Config.TriggerLevelUp) triggerNames.Add(PraiseCategory.LevelUp);
+        if (Config.TriggerLogin) triggerNames.Add(PraiseCategory.Login);
+        if (Config.TriggerGilMilestone) triggerNames.Add(PraiseCategory.GilMilestone);
+
+        var total = 0;
+        var cached = 0;
+        foreach (var category in PraiseCategory.All)
+        {
+            total += Pool.CountOf(category);
+            cached += Pool.CachedCountOf(category);
+        }
+
+        Svc.Log.Information(
+            $"[TataruPraise] 啟動：總開關 {(Config.Enabled ? "開" : "關")}"
+            + $"，已啟用觸發 {(triggerNames.Count > 0 ? string.Join("、", triggerNames) : "（無）")}"
+            + $"，冷卻 {Config.CooldownSeconds} 秒，機率 {Config.ChancePercent}%"
+            + $"，誇獎池 {total} 句、其中 {cached} 句已有語音"
+            + $"，橋接 {Config.TtsHost}，聲線 {Config.VoiceId}");
+
+        if (total > 0 && cached == 0)
+        {
+            Svc.Log.Information(
+                "[TataruPraise] 啟動：誇獎池裡一句語音都還沒合成，現在觸發也不會出聲。"
+                + "請到設定視窗的「誇獎池」分頁按「預合成語音快取」。");
+        }
+    }
+
+    private void ToggleConfig() => configWindow.Toggle();
+
+    /// <summary>試播一句，把結果留在 <see cref="LastTestMessage"/>。</summary>
+    public void RunTest()
+    {
+        var ok = Service.PlayTest(out var message);
+        LastTestMessage = ok ? $"試播：{message}" : message;
+        Svc.Log.Information($"[TataruPraise] 試播：{(ok ? "成功" : "沒有播出")}　{message}");
+    }
+
+    private void OnCommand(string command, string args)
+    {
+        var trimmed = args.Trim();
+        if (trimmed.Equals("test", StringComparison.OrdinalIgnoreCase))
+        {
+            RunTest();
+            return;
+        }
+
+        configWindow.Toggle();
+    }
+
+    public void Dispose()
+    {
+        Svc.Commands.RemoveHandler(Command);
+
+        Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
+        Svc.PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfig;
+        Svc.PluginInterface.UiBuilder.OpenMainUi -= ToggleConfig;
+        WindowSystem.RemoveAllWindows();
+
+        // 🔴 順序：先把「還會再產生工作的東西」拆掉（觸發線、IPC、背景批次），最後才拆播放器。
+        //    反過來的話，卸載當下正在跑的 Framework.Update 還可能碰到已經 Dispose 的音訊物件。
+        triggers.Dispose();
+        ipc.Dispose();
+        Jobs.Dispose();
+        Service.Dispose();
+    }
+}
