@@ -26,34 +26,47 @@ public static class PraiseText
     /// <summary>UI 滑桿的上界。</summary>
     public const int SliderMax = 60;
 
-    /// <summary>「短通知句」與「一般誇獎句」的分界：有效上限不超過這個數字就算短通知句。</summary>
+    /// <summary>「極短句」的分界：有效上限不超過這個數字＝警示／提醒那類，只有一個結尾標點。</summary>
+    public const int UltraShortThreshold = 12;
+
+    /// <summary>「短通知句」與「一般誇獎句」的分界。</summary>
     public const int ShortNoticeThreshold = 20;
 
     /// <summary>
-    /// 依「有效句長上限」算出要寫進提示詞的目標字數範圍。
+    /// 依「有效句長下限／上限」算出要寫進提示詞的目標字數範圍。
     /// </summary>
     /// <remarks>
-    /// 🔴 提示詞裡的目標範圍<b>必須跟硬過濾的上限一致</b>。原本提示詞寫死「12~25 字」，
-    /// 情境的上限被覆寫成 16 之後就會變成「請生 12~25 字，然後把超過 16 字的全丟掉」——
-    /// 失敗形狀是<b>良率掉到接近 0，而且看起來像模型壞了</b>。
+    /// 🔴 提示詞裡的目標範圍<b>必須跟硬過濾的上下限一致</b>。原本提示詞寫死「12~25 字」，
+    /// 情境的上限被覆寫成 8 之後就會變成「請生 12~25 字，然後把超過 8 字的全丟掉」——
+    /// 失敗形狀是<b>良率掉到 0，而且看起來像模型壞了</b>。
     /// <para>
-    /// 📌 兩個錨點（改這個算式時要重新對）：
-    /// 上限 28（全域預設）→ 12~25，跟改成可覆寫之前的提示詞逐字相同；
-    /// 上限 16（潛艇／製作／宇宙）→ 8~15，就是短通知句要的尺寸。
+    /// 📌 五個錨點（改這個算式時要重新對）：
+    /// 上限 8（警示）→ 2~6；上限 10（提醒）→ 2~8；上限 12（通知）→ 2~10；
+    /// 上限 16（潛艇／製作／宇宙）→ 8~15；上限 28（全域預設）→ 12~25，
+    /// 最後一個跟改成可覆寫之前的提示詞逐字相同。
     /// </para>
     /// <para>
-    /// ⚠️ 兩段式（≤20 與 &gt;20）留給標點的餘裕不一樣（1 格 vs 3 格）：短句只有一個結尾標點，
-    /// 長句常常還有一個逗號。這不是連續函數，20/21 的交界會跳一下，但兩個錨點都要落在對的值上。
+    /// ⚠️ 三段式留給標點的餘裕不一樣（2／1／3 格）：極短句只有一個驚嘆號但常常還有一個逗號、
+    /// 短通知句只有一個結尾標點、長句常常還有一個逗號。這不是連續函數，交界會跳一下，
+    /// <b>但五個錨點都要落在對的值上</b>。
     /// </para>
     /// </remarks>
-    public static (int Min, int Max) LengthHint(int effectiveMaxLength)
+    public static (int Min, int Max) LengthHint(int effectiveMinLength, int effectiveMaxLength)
     {
+        // 極短句：下限就照使用者／內建設的那個數字，不再往上推。
+        if (effectiveMaxLength <= UltraShortThreshold)
+        {
+            var ultraMax = effectiveMaxLength - 2;
+            if (ultraMax < effectiveMinLength) ultraMax = effectiveMinLength;
+            return (effectiveMinLength, ultraMax);
+        }
+
         var shortNotice = effectiveMaxLength <= ShortNoticeThreshold;
         var max = effectiveMaxLength - (shortNotice ? 1 : 3);
-        if (max < MinLength + 1) max = MinLength + 1;
+        if (max < effectiveMinLength + 1) max = effectiveMinLength + 1;
 
         var min = max - (shortNotice ? 7 : 13);
-        if (min < MinLength) min = MinLength;
+        if (min < effectiveMinLength) min = effectiveMinLength;
         return (min, max);
     }
 

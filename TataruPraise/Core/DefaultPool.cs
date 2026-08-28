@@ -104,5 +104,109 @@ public static class DefaultPool
             "任務金評，前輩果然可靠。",
             "前輩，星星上也是金評呢！",
         ],
+
+        [PraiseCategory.LowHp] =
+        [
+            "危險！",
+            "前輩，危險！",
+            "快補血！",
+            "小心血量！",
+        ],
+
+        [PraiseCategory.MarkedByMany] =
+        [
+            "小心！",
+            "被盯上了！",
+            "好多人看你！",
+            "前輩小心！",
+        ],
+
+        [PraiseCategory.EnemyBehind] =
+        [
+            "後面！",
+            "背後有人！",
+            "前輩，後面！",
+            "回頭！",
+        ],
+
+        [PraiseCategory.DutyStart] =
+        [
+            "任務開始！",
+            "前輩，開始了！",
+            "要上了唷！",
+            "出發！",
+        ],
+
+        [PraiseCategory.ReadyCheck] =
+        [
+            "準備確認！",
+            "前輩，按確認！",
+            "要確認囉！",
+            "準備好了嗎？",
+        ],
+
+        [PraiseCategory.CutsceneEnd] =
+        [
+            "注意！",
+            "前輩，開打了！",
+            "過場結束！",
+            "大家好了！",
+        ],
+
+        [PraiseCategory.DutyPop] =
+        [
+            "排到了！",
+            "前輩，排到了！",
+            "副本來了！",
+            "快按確認！",
+        ],
+
+        [PraiseCategory.FlagArrived] =
+        [
+            "到了！",
+            "前輩，到旗標了！",
+            "就是這裡！",
+            "目的地到了！",
+        ],
+
+        [PraiseCategory.Tell] =
+        [
+            "有人找你！",
+            "前輩，有私訊！",
+            "有人在叫你！",
+            "看一下聊天！",
+        ],
+
+        [PraiseCategory.Arrived] =
+        [
+            "到了！",
+            "前輩，抵達了！",
+            "到目的地了！",
+            "下車囉！",
+        ],
+
+        [PraiseCategory.Jackpot] =
+        [
+            "中了！",
+            "前輩中獎了！",
+            "恭喜中獎！",
+            "賺到了！",
+        ],
+
+        [PraiseCategory.NeedHelp] =
+        [
+            "前輩，卡住了！",
+            "需要幫忙！",
+            "這裡過不去！",
+            "請來看一下！",
+        ],
+
+        [PraiseCategory.PlayerAlert] =
+        [
+            "注意注意！",
+            "前輩，注意！",
+            "有人來了！",
+            "小心周圍！",
+        ],
     };
 }

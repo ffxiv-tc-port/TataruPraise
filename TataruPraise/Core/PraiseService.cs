@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -47,6 +48,38 @@ public sealed class PraiseService : IDisposable
         }
     }
 
+    /// <summary>
+    /// 每個情境上一次出聲的時間（UTC ticks）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 冷卻計時器是<b>逐情境</b>的。共用一個計時器的話，AutoRetainer 多角色連跑時
+    /// 後面幾個角色的「潛艇」通知會被前一個吃掉；戰鬥警示更是完全等不起兩分鐘。
+    /// <para>
+    /// 📌 「同時只播一句」的限制<b>沒有</b>跟著拆開——那是喇叭的物理限制，不是節流政策。
+    /// 正在播的時候來的東西一律丟棄（不排隊），並在 Debug 記一行。
+    /// </para>
+    /// <para>
+    /// 🔴 這個字典會被<b>呼叫端的執行緒</b>碰到（IPC 在對方執行緒上跑），所以跟 cooldownGate 共用同一把鎖。
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<string, long> lastSpokenPerCategory = new(StringComparer.Ordinal);
+
+    /// <summary>某個情境距離下次可以出聲還有幾秒（0＝現在就可以）。</summary>
+    public double CooldownRemainingSecondsOf(string category)
+    {
+        var cooldown = config.CooldownOf(category);
+        if (cooldown <= 0) return 0;
+
+        lock (cooldownGate)
+        {
+            if (!lastSpokenPerCategory.TryGetValue(category, out var ticks)) return 0;
+
+            var elapsed = (DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc)).TotalSeconds;
+            var remain = cooldown - elapsed;
+            return remain > 0 ? remain : 0;
+        }
+    }
+
     /// <summary>總開關開著、而且真的有可播的內容。</summary>
     public bool IsAvailable() => config.Enabled && pool.HasAnyCached();
 
@@ -65,7 +98,7 @@ public sealed class PraiseService : IDisposable
     public bool TryTrigger(string category, int? chanceOverride = null)
     {
         if (!config.Enabled) return false;
-        if (CooldownRemainingSeconds > 0) return false;
+        if (CooldownRemainingSecondsOf(category) > 0) return false;
 
         var chance = Math.Clamp(chanceOverride ?? config.ChancePercent, 0, 100);
         if (chance <= 0) return false;
@@ -81,7 +114,7 @@ public sealed class PraiseService : IDisposable
     public bool Praise(string category)
     {
         if (!config.Enabled) return false;
-        if (CooldownRemainingSeconds > 0) return false;
+        if (CooldownRemainingSecondsOf(category) > 0) return false;
         return PlayFromPool(category);
     }
 
@@ -160,16 +193,27 @@ public sealed class PraiseService : IDisposable
         }
 
         var queued = audio.TryPlayFile(pool.CachePathFor(text), config.Volume);
-        if (!queued) return false;
+        if (!queued)
+        {
+            // 上一句還在播。通知／警示不排隊——等它播完再喊「後面！」已經沒有意義了。
+            Svc.Log.Debug($"[TataruPraise] 情境「{category}」：上一句還在播，這次丟棄。");
+            return false;
+        }
 
-        MarkSpoken();
+        MarkSpoken(category);
         Svc.Log.Information($"[TataruPraise] 觸發「{category}」：{text}");
         return true;
     }
 
-    private void MarkSpoken()
+    /// <summary>記下「剛剛出聲了」：全域那份給 UI 顯示用，逐情境那份才是真的冷卻閘門。</summary>
+    private void MarkSpoken(string category = "")
     {
-        lock (cooldownGate) lastSpokenUtc = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        lock (cooldownGate)
+        {
+            lastSpokenUtc = now;
+            if (category.Length > 0) lastSpokenPerCategory[category] = now.Ticks;
+        }
     }
 
     private void TryWriteCache(string text, byte[] wav)

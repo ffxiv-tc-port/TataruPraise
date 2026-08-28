@@ -51,6 +51,28 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Gil 里程碑的間隔：每跨過這個數字的整數倍就算一次里程碑。</summary>
     public long GilMilestoneStep { get; set; } = 1_000_000;
 
+    // ── 戰鬥警示（全部預設關；純讀狀態、純出聲，不做任何遊戲操作）────────────
+    /// <summary>血量掉到門檻以下時警示（要在戰鬥中）。</summary>
+    public bool TriggerLowHp { get; set; } = false;
+
+    /// <summary>血量警示的門檻（%）。跌破才觸發。</summary>
+    public int LowHpThresholdPercent { get; set; } = 30;
+
+    /// <summary>被多個敵對玩家同時鎖定時警示（只在 PvP 區域）。</summary>
+    public bool TriggerMarkedByMany { get; set; } = false;
+
+    /// <summary>要幾個敵對玩家同時鎖定我才算「被大量標記」。</summary>
+    public int MarkedByManyCount { get; set; } = 3;
+
+    /// <summary>敵對玩家從背後接近時警示（只在 PvP 區域）。</summary>
+    public bool TriggerEnemyBehind { get; set; } = false;
+
+    /// <summary>背後警示的距離（碼）。超過這個距離的不算。</summary>
+    public float EnemyBehindRange { get; set; } = 15f;
+
+    /// <summary>要幾個敵對玩家同時從背後接近才觸發。</summary>
+    public int EnemyBehindCount { get; set; } = 2;
+
     // ── 觸發前提補強 ───────────────────────────────────────────────
     /// <summary>登入誇獎只在「當天第一次」出聲。</summary>
     /// <remarks>
@@ -151,6 +173,82 @@ public sealed class Configuration : IPluginConfiguration
     /// </para>
     /// </remarks>
     public Dictionary<string, int> CategoryMaxLength { get; set; } = [];
+
+    /// <summary>
+    /// 每個情境的「句長<b>下限</b>覆寫」（字，不含空白）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 全域下限 <see cref="Core.PraiseText.MinLength"/>（6 字）是拿來擋殘句的，對警示／提醒情境
+    /// 完全不適用——「後面！」只有 3 個字，正是要的東西。不放寬的話那些情境生回來的句子會全部被丟掉。
+    /// </remarks>
+    public Dictionary<string, int> CategoryMinLength { get; set; } = [];
+
+    /// <summary>某個情境生效的句長下限：自訂覆寫 → 內建覆寫 → 全域下限。</summary>
+    public int MinLengthOf(string category)
+    {
+        if (CategoryMinLength.TryGetValue(category, out var custom) && custom > 0)
+            return Math.Clamp(custom, 1, Core.PraiseText.SliderMax);
+
+        var builtin = Core.PraiseCategory.DefaultMinLength(category);
+        if (builtin > 0) return builtin;
+
+        return Core.PraiseText.MinLength;
+    }
+
+    /// <summary>這個情境的下限是不是「自訂覆寫」來的。</summary>
+    public bool HasMinLengthOverride(string category)
+        => CategoryMinLength.TryGetValue(category, out var v) && v > 0;
+
+    /// <summary>設定某個情境的句長下限覆寫（0 或負數＝清掉覆寫）。</summary>
+    public void SetMinLength(string category, int value)
+    {
+        if (value <= 0)
+            CategoryMinLength.Remove(category);
+        else
+            CategoryMinLength[category] = Math.Clamp(value, 1, Core.PraiseText.SliderMax);
+
+        Save();
+    }
+
+    /// <summary>
+    /// 每個情境的「冷卻秒數覆寫」。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 全域冷卻（預設 120 秒）套到通知上會把東西吃掉：AutoRetainer 多角色連跑時，
+    /// 後面幾個角色的「潛艇」通知會全部落在冷卻裡靜默消失；警示過了兩分鐘才喊也沒有意義。
+    /// <para>
+    /// 📌 優先序：<b>自訂覆寫 → 內建覆寫（通知 5 秒、警示 15／10／10）→ 全域 <see cref="CooldownSeconds"/></b>。
+    /// 計時器本身是逐情境的（見 <see cref="Core.PraiseService"/>），「潛艇」的冷卻不會擋到「血量低」。
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, int> CategoryCooldownSeconds { get; set; } = [];
+
+    /// <summary>某個情境生效的冷卻秒數：自訂覆寫 → 內建覆寫 → 全域冷卻。</summary>
+    public int CooldownOf(string category)
+    {
+        if (CategoryCooldownSeconds.TryGetValue(category, out var custom) && custom > 0)
+            return Math.Clamp(custom, 0, 3600);
+
+        var builtin = Core.PraiseCategory.DefaultCooldownSeconds(category);
+        if (builtin > 0) return builtin;
+
+        return Math.Max(0, CooldownSeconds);
+    }
+
+    /// <summary>這個情境的冷卻是不是「自訂覆寫」來的。</summary>
+    public bool HasCooldownOverride(string category)
+        => CategoryCooldownSeconds.TryGetValue(category, out var v) && v > 0;
+
+    /// <summary>設定某個情境的冷卻覆寫（0 或負數＝清掉覆寫，退回內建／全域）。</summary>
+    public void SetCooldown(string category, int seconds)
+    {
+        if (seconds <= 0)
+            CategoryCooldownSeconds.Remove(category);
+        else
+            CategoryCooldownSeconds[category] = Math.Clamp(seconds, 1, 3600);
+
+        Save();
+    }
 
     /// <summary>全域句長上限，夾在 UI 滑桿範圍內（設定檔被手改成離譜的值也不會讓 UI 壞掉）。</summary>
     public int ClampedMaxPraiseLength

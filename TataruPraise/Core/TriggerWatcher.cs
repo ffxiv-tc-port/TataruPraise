@@ -2,6 +2,11 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using System.Numerics;
+using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
 using Lumina.Excel.Sheets;
 
 namespace TataruPraise.Core;
@@ -36,6 +41,33 @@ public sealed class TriggerWatcher : IDisposable
 
     /// <summary>ContentFinderCondition 反查壞掉過就不再試，也只寫一次 log。</summary>
     private bool contentLookupBroken;
+
+    /// <summary>警示線的輪詢間隔。血量與周圍敵人不需要每幀掃，4 Hz 對「來得及喊一聲」綽綽有餘。</summary>
+    private static readonly TimeSpan AlertPollInterval = TimeSpan.FromMilliseconds(250);
+
+    private DateTime lastAlertPollUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// 血量警示的遲滯：血量回到門檻以上才重新「上膛」。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 沒有遲滯的話，血量在門檻附近抖動時每一次輪詢都會觸發一次，冷卻一到就再喊一次。
+    /// 上膛條件刻意是「回到門檻以上」而不是「離開戰鬥」——一場戰鬥裡掉血兩次是該喊兩次的。
+    /// </remarks>
+    private bool lowHpArmed = true;
+
+    /// <summary>
+    /// 上一次輪詢時，各敵對玩家離我多遠（<c>GameObjectId</c> → 距離）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 只存 <b>id 與純量</b>。原生指標與 <see cref="Dalamud.Game.ClientState.Objects.Types.IGameObject"/>
+    /// 包裝一律不跨幀保存：本 pin 的 ObjectTable 是每格重用同一個包裝、存取時就地改寫 Address，
+    /// 跨幀持有會靜默換人或懸空。
+    /// </remarks>
+    private readonly Dictionary<ulong, float> lastEnemyDistance = [];
+
+    /// <summary>這一輪掃描用的暫存（每次輪詢重用，不要每 250ms 配一個新字典）。</summary>
+    private readonly Dictionary<ulong, float> enemyDistanceScratch = [];
 
     private DateTime lastGilPollUtc = DateTime.MinValue;
 
@@ -193,6 +225,8 @@ public sealed class TriggerWatcher : IDisposable
         // 🔴 每次登入都要清乾淨：換角色時舊角色的等級表留著，會讓新角色的第一次等級回報被當成升等。
         knownLevels.Clear();
         lastGil = -1;
+        lowHpArmed = true;
+        lastEnemyDistance.Clear();
 
         if (!config.TriggerLogin) return;
 
@@ -221,10 +255,19 @@ public sealed class TriggerWatcher : IDisposable
     {
         knownLevels.Clear();
         lastGil = -1;
+        lowHpArmed = true;
+        lastEnemyDistance.Clear();
     }
 
     private void OnFrameworkUpdate(IFramework framework)
     {
+        var now = DateTime.UtcNow;
+        if (now - lastAlertPollUtc >= AlertPollInterval)
+        {
+            lastAlertPollUtc = now;
+            PollAlerts();
+        }
+
         if (!config.TriggerGilMilestone) return;
         if (gilReadBroken) return;
         if (!Svc.ClientState.IsLoggedIn)
@@ -233,7 +276,6 @@ public sealed class TriggerWatcher : IDisposable
             return;
         }
 
-        var now = DateTime.UtcNow;
         if (now - lastGilPollUtc < GilPollInterval) return;
         lastGilPollUtc = now;
 
@@ -281,6 +323,171 @@ public sealed class TriggerWatcher : IDisposable
     /// 只會把實機 log 洗掉，而 log 是事後唯一的診斷來源。
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// 三條戰鬥警示線：血量低、被大量標記、背後有人。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>純讀狀態、純出聲，不做任何遊戲操作</b>——不施放、不走位、不改目標。
+    /// <para>
+    /// 🔴 整段只在 <see cref="OnFrameworkUpdate"/> 裡跑，物件包裝<b>當幀用完即丟</b>，
+    /// 只把 <c>GameObjectId</c>（ulong）與距離（float）留到下一輪。
+    /// </para>
+    /// <para>
+    /// ⚠️ 後兩條只在 PvP 區域跑（<see cref="Dalamud.Plugin.Services.IClientState.IsPvP"/>）：
+    /// PvE 的敵人不是玩家，「被幾個人標記」與「有人繞後」在那裡沒有意義，而且會白掃物件表。
+    /// </para>
+    /// </remarks>
+    private void PollAlerts()
+    {
+        if (!config.TriggerLowHp && !config.TriggerMarkedByMany && !config.TriggerEnemyBehind)
+        {
+            if (lastEnemyDistance.Count > 0) lastEnemyDistance.Clear();
+            return;
+        }
+
+        // 📌 走 IObjectTable.LocalPlayer：IClientState.LocalPlayer 在本 pin 已標記過時。
+        var me = Svc.Objects.LocalPlayer;
+        if (me == null)
+        {
+            lowHpArmed = true;
+            lastEnemyDistance.Clear();
+            return;
+        }
+
+        // 🔴 純量在這裡一次抄乾淨，後面完全不再碰 me（包裝不跨迴圈用）。
+        var myId = me.GameObjectId;
+        var myPosition = me.Position;
+        var myRotation = me.Rotation;
+        var currentHp = me.CurrentHp;
+        var maxHp = me.MaxHp;
+
+        if (config.TriggerLowHp) PollLowHp(currentHp, maxHp);
+
+        if (!Svc.ClientState.IsPvP)
+        {
+            // 離開 PvP 就把上一輪的距離忘掉：留著會讓下次進場的第一輪誤判成「正在接近」。
+            if (lastEnemyDistance.Count > 0) lastEnemyDistance.Clear();
+            return;
+        }
+
+        if (!config.TriggerMarkedByMany && !config.TriggerEnemyBehind) return;
+        PollHostilePlayers(myId, myPosition, myRotation);
+    }
+
+    /// <summary>
+    /// 血量低。
+    /// </summary>
+    /// <remarks>
+    /// 判定式：<c>InCombat</c> 且 <c>CurrentHp * 100 / MaxHp &lt; 門檻</c>，而且上一次觸發之後
+    /// 血量曾經回到門檻以上（<see cref="lowHpArmed"/>）。
+    /// <para>📌 用整數百分比比較，不用浮點——避免「29.999% 算不算跌破」這種邊界問題。</para>
+    /// </remarks>
+    private void PollLowHp(uint currentHp, uint maxHp)
+    {
+        if (maxHp == 0) return;
+
+        var percent = (int)(currentHp * 100UL / maxHp);
+        var threshold = Math.Clamp(config.LowHpThresholdPercent, 1, 99);
+
+        if (percent >= threshold)
+        {
+            lowHpArmed = true;
+            return;
+        }
+
+        if (!lowHpArmed) return;
+        if (currentHp == 0) return;
+        if (!Svc.Condition[ConditionFlag.InCombat]) return;
+
+        lowHpArmed = false;
+        Svc.Log.Information($"[TataruPraise] 警示：血量 {percent}%（門檻 {threshold}%）。");
+
+        // 🔴 警示不擲骰：30% 機率的警示比沒有還糟（該喊的時候不喊）。冷卻照走。
+        service.TryTrigger(PraiseCategory.LowHp, 100);
+    }
+
+    /// <summary>
+    /// 掃一次物件表，同時算「被幾個敵對玩家鎖定」與「幾個敵對玩家從背後接近」。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 兩條線<b>共用同一次掃描</b>：物件表最多 200 格，每 250ms 掃兩次沒有必要。
+    /// <para>
+    /// 敵對判定＝<see cref="Dalamud.Game.ClientState.Objects.Enums.StatusFlags.Hostile"/>
+    /// （Dalamud 由 <c>Character.IsHostile</c> 轉出來的）。⚠️ 這個旗標在台服 PvP 裡對敵方玩家是不是
+    /// 一定會亮，<b>離線證不了</b>——證不了的後果是「這兩條線不觸發」，不是崩潰。
+    /// </para>
+    /// <para>
+    /// 「從背後接近」的判定式（三個條件同時成立）：
+    /// <list type="number">
+    /// <item>在背後：以我的 <c>Rotation</c> 為前方，前方向量 <c>(sin r, cos r)</c> 與
+    /// 「我→他」的水平向量內積 &lt; 0，等價於夾角大於 90°。</item>
+    /// <item>夠近：水平距離 ≤ 設定的碼數。</item>
+    /// <item>正在接近：這一輪的距離比<b>上一輪</b>小（至少 0.05 碼，濾掉抖動）。
+    /// 上一輪沒看過這個 id 就<b>不算</b>——剛進視野的第一輪沒有比較基準。</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    private void PollHostilePlayers(ulong myId, Vector3 myPosition, float myRotation)
+    {
+        var forwardX = MathF.Sin(myRotation);
+        var forwardZ = MathF.Cos(myRotation);
+
+        var range = Math.Clamp(config.EnemyBehindRange, 1f, 50f);
+        var markedCount = 0;
+        var behindCount = 0;
+
+        enemyDistanceScratch.Clear();
+
+        foreach (var obj in Svc.Objects)
+        {
+            // 🔴 obj 只在這一圈裡用，絕不留到下一幀。
+            if (obj is not IPlayerCharacter player) continue;
+
+            var id = player.GameObjectId;
+            if (id == myId) continue;
+            if ((player.StatusFlags & StatusFlags.Hostile) == 0) continue;
+
+            if (player.TargetObjectId == myId) markedCount++;
+
+            var dx = player.Position.X - myPosition.X;
+            var dz = player.Position.Z - myPosition.Z;
+            var distance = MathF.Sqrt((dx * dx) + (dz * dz));
+            enemyDistanceScratch[id] = distance;
+
+            if (!config.TriggerEnemyBehind) continue;
+            if (distance > range) continue;
+
+            // 內積 < 0 ＝ 他在我的後半平面。
+            if ((dx * forwardX) + (dz * forwardZ) >= 0f) continue;
+            if (!lastEnemyDistance.TryGetValue(id, out var previous)) continue;
+            if (distance >= previous - 0.05f) continue;
+
+            behindCount++;
+        }
+
+        lastEnemyDistance.Clear();
+        foreach (var (id, distance) in enemyDistanceScratch) lastEnemyDistance[id] = distance;
+
+        if (config.TriggerMarkedByMany)
+        {
+            var need = Math.Max(1, config.MarkedByManyCount);
+            if (markedCount >= need)
+            {
+                Svc.Log.Information($"[TataruPraise] 警示：{markedCount} 個敵對玩家鎖定我（門檻 {need}）。");
+                service.TryTrigger(PraiseCategory.MarkedByMany, 100);
+            }
+        }
+
+        if (!config.TriggerEnemyBehind) return;
+
+        var behindNeed = Math.Max(1, config.EnemyBehindCount);
+        if (behindCount < behindNeed) return;
+
+        Svc.Log.Information(
+            $"[TataruPraise] 警示：{behindCount} 個敵對玩家從背後接近（門檻 {behindNeed}、{range:F0} 碼內）。");
+        service.TryTrigger(PraiseCategory.EnemyBehind, 100);
+    }
+
     private unsafe long ReadGil()
     {
         try

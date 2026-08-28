@@ -195,6 +195,82 @@ public sealed class ConfigWindow : Window
 
         ImGui.Spacing();
         ImGui.Separator();
+        ImGui.TextDisabled("戰鬥警示（只讀狀態、只出聲，不會做任何遊戲操作）");
+
+        var lowHp = Config.TriggerLowHp;
+        if (ImGui.Checkbox("血量低", ref lowHp)) { Config.TriggerLowHp = lowHp; Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "戰鬥中血量跌破門檻時喊一聲。血量回到門檻以上才會重新上膛，\n"
+                + "所以在門檻附近抖動不會一直喊。冷卻預設 15 秒（逐情境）。");
+        }
+
+        ImGui.Indent();
+        var hpThreshold = Config.LowHpThresholdPercent;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt("血量門檻（%）##lowHpThreshold", ref hpThreshold, 1, 99))
+        {
+            Config.LowHpThresholdPercent = Math.Clamp(hpThreshold, 1, 99);
+            Config.Save();
+        }
+
+        ImGui.Unindent();
+
+        var marked = Config.TriggerMarkedByMany;
+        if (ImGui.Checkbox("被大量敵人標記（僅 PvP）", ref marked)) { Config.TriggerMarkedByMany = marked; Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "只在 PvP 區域跑。每 0.25 秒掃一次物件表，數「正在把我當目標」的敵對玩家。\n"
+                + "敵對判定走 Dalamud 的 StatusFlags.Hostile。冷卻預設 10 秒。");
+        }
+
+        ImGui.Indent();
+        var markedCount = Config.MarkedByManyCount;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt("幾個人鎖定我才算##markedCount", ref markedCount, 1, 8))
+        {
+            Config.MarkedByManyCount = Math.Clamp(markedCount, 1, 8);
+            Config.Save();
+        }
+
+        ImGui.Unindent();
+
+        var behind = Config.TriggerEnemyBehind;
+        if (ImGui.Checkbox("敵人從後面來（僅 PvP）", ref behind)) { Config.TriggerEnemyBehind = behind; Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "只在 PvP 區域跑。三個條件同時成立才算：在我的後半平面（夾角大於 90 度）、\n"
+                + "距離在設定的碼數內、而且比上一次掃描時更近（正在接近）。\n"
+                + "剛進視野的第一次不算——沒有比較基準。冷卻預設 10 秒。");
+        }
+
+        ImGui.Indent();
+        var behindRange = Config.EnemyBehindRange;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderFloat("距離（碼）##behindRange", ref behindRange, 1f, 50f, "%.0f"))
+        {
+            Config.EnemyBehindRange = Math.Clamp(behindRange, 1f, 50f);
+            Config.Save();
+        }
+
+        var behindCount = Config.EnemyBehindCount;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt("幾個人繞到後面才算##behindCount", ref behindCount, 1, 8))
+        {
+            Config.EnemyBehindCount = Math.Clamp(behindCount, 1, 8);
+            Config.Save();
+        }
+
+        ImGui.Unindent();
+
+        ImGui.TextDisabled("其餘情境（潛艇、製作、宇宙、任務開始…）沒有內建觸發，由別的外掛用 IPC 呼叫。");
+
+
+        ImGui.Spacing();
+        ImGui.Separator();
         ImGui.Spacing();
 
         var cooldown = Config.CooldownSeconds;
@@ -391,6 +467,12 @@ public sealed class ConfigWindow : Window
     /// <summary>編輯中的句長上限覆寫草稿（0＝沿用預設／全域）。</summary>
     private int editingMaxLength;
 
+    /// <summary>編輯中的句長下限覆寫草稿（0＝沿用）。</summary>
+    private int editingMinLength;
+
+    /// <summary>編輯中的冷卻秒數覆寫草稿（0＝沿用）。</summary>
+    private int editingCooldown;
+
     /// <summary>
     /// 已經按過第一下「刪除」的情境（空字串＝沒有）。
     /// </summary>
@@ -492,11 +574,12 @@ public sealed class ConfigWindow : Window
 
         DrawAddCategory();
 
-        if (ImGui.BeginTable("##poolStats", 8, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+        if (ImGui.BeginTable("##poolStats", 9, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
         {
             ImGui.TableSetupColumn("情境");
             ImGui.TableSetupColumn("情境描述");
             ImGui.TableSetupColumn("句長上限");
+            ImGui.TableSetupColumn("冷卻(秒)");
             ImGui.TableSetupColumn("句數");
             ImGui.TableSetupColumn("已有語音");
             ImGui.TableSetupColumn("生成");
@@ -573,6 +656,28 @@ public sealed class ConfigWindow : Window
                             ? $"這個情境自己的句長上限是 {effectiveMax} 字（全域是 {Config.ClampedMaxPraiseLength} 字）。\n"
                               + "生成時提示詞要的字數也會跟著這個數字調整。按「編輯」可以改。"
                             : $"沿用全域上限 {effectiveMax} 字。按「編輯」可以只為這個情境設一個不一樣的上限。");
+                }
+
+                // ── 冷卻：沿用全域的畫灰，情境自己有的畫正常 ──
+                ImGui.TableNextColumn();
+                var effectiveCooldown = Config.CooldownOf(category);
+                var ownCooldown = Config.HasCooldownOverride(category)
+                                  || PraiseCategory.DefaultCooldownSeconds(category) > 0;
+                if (ownCooldown)
+                    ImGui.TextUnformatted(effectiveCooldown.ToString());
+                else
+                    ImGui.TextColored(ColorUnknown, effectiveCooldown.ToString());
+
+                if (ImGui.IsItemHovered())
+                {
+                    var remaining = plugin.Service.CooldownRemainingSecondsOf(category);
+                    ImGui.SetTooltip(
+                        (ownCooldown
+                            ? $"這個情境自己的冷卻是 {effectiveCooldown} 秒（全域是 {Config.CooldownSeconds} 秒）。"
+                            : $"沿用全域冷卻 {effectiveCooldown} 秒。")
+                        + "\n冷卻計時器是逐情境分開算的：這個情境的冷卻不會擋到別的情境。"
+                        + $"\n目前狀態：{(remaining > 0 ? $"還要等 {remaining:F0} 秒" : "現在就可以出聲")}"
+                        + "\n按「編輯」可以改。");
                 }
 
                 ImGui.TableNextColumn();
@@ -770,6 +875,8 @@ public sealed class ConfigWindow : Window
             {
                 Config.CategoryDescriptions.Remove(category);
                 Config.CategoryMaxLength.Remove(category);
+                Config.CategoryMinLength.Remove(category);
+                Config.CategoryCooldownSeconds.Remove(category);
                 Config.Save();
                 Svc.Log.Information($"[TataruPraise] 已刪除情境「{category}」（連同 {removed} 句）。");
             }
@@ -793,6 +900,8 @@ public sealed class ConfigWindow : Window
         editingCategory = category;
         editingDescription = Config.DescriptionOf(category);
         editingMaxLength = Config.HasMaxLengthOverride(category) ? Config.MaxLengthOf(category) : 0;
+        editingMinLength = Config.HasMinLengthOverride(category) ? Config.MinLengthOf(category) : 0;
+        editingCooldown = Config.HasCooldownOverride(category) ? Config.CooldownOf(category) : 0;
         pendingDeleteCategory = string.Empty;
     }
 
@@ -848,16 +957,47 @@ public sealed class ConfigWindow : Window
                 + "通知型的情境（潛艇／製作／宇宙）內建就是 16 字，因為那是短通知不是誇獎。");
         }
 
+        var minLength = editingMinLength;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.InputInt("句長下限覆寫（0＝沿用）##editMinLength", ref minLength, 1, 5))
+            editingMinLength = Math.Clamp(minLength, 0, PraiseText.SliderMax);
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                $"只給這個情境用的句長下限。0＝沿用全域的 {PraiseText.MinLength} 字。\n"
+                + "全域下限是拿來擋模型吐出來的殘句的；警示／通知情境的句子本來就很短，\n"
+                + "不放寬下限的話生回來的東西會全部被當成殘句丟掉。");
+        }
+
+        var cooldown = editingCooldown;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.InputInt("冷卻秒數覆寫（0＝沿用）##editCooldown", ref cooldown, 1, 10))
+            editingCooldown = Math.Clamp(cooldown, 0, 3600);
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                $"只給這個情境用的冷卻秒數。0＝沿用全域的 {Config.CooldownSeconds} 秒。\n"
+                + "優先序：這裡填的 → 內建的（通知 5 秒、警示 15／10／10）→ 全域。\n"
+                + "計時器逐情境分開算，所以多角色連跑的潛艇通知不會被前一個吃掉。");
+        }
+
         var effective = editingMaxLength > 0
             ? Math.Clamp(editingMaxLength, PraiseText.MinLength, PraiseText.SliderMax)
             : Config.MaxLengthOf(category);
-        var (hintMin, hintMax) = PraiseText.LengthHint(effective);
+        var effectiveMin = editingMinLength > 0
+            ? Math.Clamp(editingMinLength, 1, PraiseText.SliderMax)
+            : Config.MinLengthOf(category);
+        var (hintMin, hintMax) = PraiseText.LengthHint(effectiveMin, effective);
         ImGui.TextColored(ColorUnknown, $"生成時會跟模型要 {hintMin}～{hintMax} 字，超過 {effective} 字的直接丟掉。");
 
         if (ImGui.Button("儲存##editSave"))
         {
             Config.SetDescription(category, editingDescription);
             Config.SetMaxLength(category, editingMaxLength);
+            Config.SetMinLength(category, editingMinLength);
+            Config.SetCooldown(category, editingCooldown);
             editingCategory = string.Empty;
             statsRefreshedUtc = DateTime.MinValue;
         }
@@ -871,6 +1011,8 @@ public sealed class ConfigWindow : Window
         {
             editingDescription = PraiseCategory.DefaultDescription(category);
             editingMaxLength = 0;
+            editingMinLength = 0;
+            editingCooldown = 0;
         }
 
         if (ImGui.IsItemHovered())
@@ -1063,7 +1205,9 @@ public sealed class ConfigWindow : Window
         {
             ImGui.SetTooltip(
                 "「擴充誇獎池」生回來的句子，超過這個字數就直接丟掉，不會進池（丟了幾句會寫在下面的結果與記錄檔裡）。\n"
-                + "字數不含空白，中文標點算在內。提示詞本身要求的是 12～25 字，上限預設 28 是留給標點的餘裕。\n"
+                + "📌 這是「全域」上限：情境表格上每一列都可以自己覆寫（通知 16／10／12 字、警示 8 字）。\n"
+                + "字數不含空白，中文標點算在內。提示詞要模型生幾個字會跟著有效上限自動算，\n"
+                + "所以調這個滑桿也會改變生出來的句子有多長。\n"
                 + "🔴 這個上限只擋新生成的句子；pool.json 裡已經有的長句不會被動到。");
         }
 
@@ -1071,16 +1215,16 @@ public sealed class ConfigWindow : Window
         if (overLimit <= 0)
         {
             prunePending = false;
-            ImGui.TextDisabled($"池裡沒有超過 {maxLength} 字的句子。");
+            ImGui.TextDisabled("池裡沒有超過各情境上限的句子。");
             return;
         }
 
-        ImGui.TextColored(ColorUnknown, $"池裡有 {overLimit} 句超過 {maxLength} 字（既有句子不會自動刪掉）");
+        ImGui.TextColored(ColorUnknown, $"池裡有 {overLimit} 句超過該情境的上限（既有句子不會自動刪掉）");
 
         ImGui.BeginDisabled(plugin.Jobs.IsRunning);
         if (!prunePending)
         {
-            if (ImGui.Button($"移除超過上限的句子（{overLimit} 句）##prune"))
+            if (ImGui.Button($"移除超過各情境上限的句子（{overLimit} 句）##prune"))
                 prunePending = true;
 
             if (ImGui.IsItemHovered())

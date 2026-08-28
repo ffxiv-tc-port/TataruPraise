@@ -133,7 +133,8 @@ public static class GeminiClient
     /// 其他狀態碼（例如 <c>400</c> 金鑰錯、<c>404</c> 模型已下架）重試沒有意義，直接放棄。
     /// </remarks>
     public static async Task<List<string>> GenerateAsync(
-        string apiKey, string model, string category, string situation, int count, int maxLength,
+        string apiKey, string model, string category, string situation, int count,
+        int minLength, int maxLength,
         CancellationToken token, GenerateStats? stats = null)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -144,7 +145,7 @@ public static class GeminiClient
 
         // 🔴 提示詞裡的目標字數一律從「這個情境的有效上限」算，不寫死：
         //    情境可以各自覆寫上限（短通知句是 16），寫死 12~25 會讓生回來的句子幾乎全被過濾掉。
-        var (hintMin, hintMax) = PraiseText.LengthHint(maxLength);
+        var (hintMin, hintMax) = PraiseText.LengthHint(minLength, maxLength);
         var describedSituation = string.IsNullOrWhiteSpace(situation)
             ? PraiseCategory.DescribeSituation(category)
             : situation.Trim();
@@ -153,7 +154,7 @@ public static class GeminiClient
             $"遊戲情境：{describedSituation}。" +
             $"請針對這個情境，一次產生 {count} 句彼此不重複的誇獎。" +
             "每一句都要能單獨拿出來用，句型、開頭、語氣都要不一樣，不要用同一個模板換詞；" +
-            $"每句 {hintMin}~{hintMax} 個中文字，只能一句話、最多一個逗號，超過 {maxLength} 字的句子會被直接丟掉。" +
+            $"每句 {hintMin}~{hintMax} 個中文字，只能一句話、最多一個逗號，超過 {maxLength} 字或不到 {minLength} 字的句子會被直接丟掉。" +
             "只輸出一個 JSON 陣列，陣列的每個元素是一個字串，就是一句誇獎；" +
             "不要輸出任何說明文字、不要 markdown 程式碼圍籬、不要鍵值物件。";
 
@@ -211,7 +212,7 @@ public static class GeminiClient
                     return [];
                 }
 
-                return ParseLines(text, maxLength, category, stats);
+                return ParseLines(text, minLength, maxLength, category, stats);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -272,13 +273,13 @@ public static class GeminiClient
     /// 🔴 最後一定要把「沒有任何中文標點的句子」濾掉——那種句子送進橋接會念成怪腔。
     /// <para>
     /// 🔴 <b>提示詞只是請求，這裡的長度過濾才是保證。</b>模型照樣會吐出長句，超過
-    /// <paramref name="maxLength"/> 字（不含空白）的直接丟掉，短於 <see cref="PraiseText.MinLength"/> 字的也丟
+    /// <paramref name="maxLength"/> 字（不含空白）的直接丟掉，短於 <paramref name="minLength"/> 字的也丟
     /// （那多半是殘句）。丟掉幾句會寫進 <see cref="Svc.Log"/> 的 Information，也回填到
     /// <paramref name="stats"/> 讓設定視窗顯示得出來——<b>「被丟掉了」這件事不能只活在記錄檔裡</b>。
     /// </para>
     /// </remarks>
     public static List<string> ParseLines(
-        string raw, int maxLength, string category = "", GenerateStats? stats = null)
+        string raw, int minLength, int maxLength, string category = "", GenerateStats? stats = null)
     {
         var text = raw.Trim();
 
@@ -356,7 +357,8 @@ public static class GeminiClient
                 continue;
             }
 
-            if (length < PraiseText.MinLength)
+            // 🔴 下限是逐情境的：全域下限 6 字會把「後面！」這種警示句全部當殘句丟掉。
+            if (length < minLength)
             {
                 tooShort++;
                 continue;
@@ -375,7 +377,7 @@ public static class GeminiClient
         if (tooLong > 0)
             Svc.Log.Information($"[TataruPraise] 已丟棄 {tooLong} 句超長（超過 {maxLength} 字）{suffix}。");
         if (tooShort > 0)
-            Svc.Log.Information($"[TataruPraise] 已丟棄 {tooShort} 句過短（不到 {PraiseText.MinLength} 字）{suffix}。");
+            Svc.Log.Information($"[TataruPraise] 已丟棄 {tooShort} 句過短（不到 {minLength} 字）{suffix}。");
 
         if (stats != null)
         {

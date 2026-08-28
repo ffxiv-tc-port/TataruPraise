@@ -253,7 +253,7 @@ public sealed class PoolJobs : IDisposable
         var lines = await GeminiClient
             .GenerateAsync(
                 config.GeminiApiKey, config.GeminiModel, category, config.SituationOf(category),
-                count, maxLength, token, stats)
+                count, config.MinLengthOf(category), maxLength, token, stats)
             .ConfigureAwait(false);
 
         var added = pool.AddLines(category, lines, out var duplicates);
