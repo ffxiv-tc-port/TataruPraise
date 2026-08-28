@@ -182,6 +182,41 @@ public sealed class Configuration : IPluginConfiguration
     /// </remarks>
     public Dictionary<string, string> CategoryDescriptions { get; set; } = [];
 
+    // ── 逐情境的啟用開關 ─────────────────────────────────────────────
+    /// <summary>
+    /// 每個情境的「要不要出聲」。<b>沒有這個鍵＝啟用</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>缺鍵一律當「啟用」</b>：既有使用者的設定檔裡根本沒有這個字典，
+    /// 若把缺鍵當成「關」，升級之後全部情境會一起靜默閉嘴，而且完全沒有錯誤訊息。
+    /// <para>
+    /// 📌 關掉之後擋的是<b>池播放</b>那條路（見 <see cref="Core.PraiseService"/>）：
+    /// 內建觸發與 IPC <c>Praise</c> 都不出聲（<c>Praise</c> 回 <c>false</c>）。
+    /// <b>不</b>影響 IPC <c>Speak</c>（呼叫端自己指定句子）與設定視窗的「試播」——
+    /// 那兩個是「明確要求念這一句」，不是事件。
+    /// </para>
+    /// <para>
+    /// 📌 只有「關」會寫進字典，改回啟用就把鍵刪掉：「缺鍵＝啟用」要維持成<b>唯一</b>的預設語意，
+    /// 兩種寫法並存的話之後改預設會有一半的使用者吃不到。
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, bool> CategoryEnabled { get; set; } = [];
+
+    /// <summary>這個情境現在要不要出聲（沒有這個鍵＝要）。</summary>
+    public bool IsCategoryEnabled(string category)
+        => !CategoryEnabled.TryGetValue(category, out var enabled) || enabled;
+
+    /// <summary>開關某個情境（啟用＝把鍵刪掉，回到「缺鍵＝啟用」）。</summary>
+    public void SetCategoryEnabled(string category, bool enabled)
+    {
+        if (enabled)
+            CategoryEnabled.Remove(category);
+        else
+            CategoryEnabled[category] = false;
+
+        Save();
+    }
+
     /// <summary>
     /// 每個情境的「句長上限覆寫」（字，不含空白）。
     /// </summary>

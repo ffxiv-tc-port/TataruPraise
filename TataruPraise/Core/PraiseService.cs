@@ -12,9 +12,9 @@ namespace TataruPraise.Core;
 /// <remarks>
 /// 三個入口的規則刻意不一樣，README 與 IPC 契約都照這裡寫：
 /// <list type="table">
-/// <item><term><see cref="TryTrigger"/>（遊戲事件）</term><description>總開關 → 該事件開關 → 冷卻 → 機率</description></item>
-/// <item><term><see cref="Praise"/>（IPC）</term><description>總開關 → 冷卻（<b>不看</b>事件開關與機率）</description></item>
-/// <item><term><see cref="Speak"/>（IPC）</term><description>總開關（<b>不看</b>冷卻與機率——呼叫端是明確要求念這一句）</description></item>
+/// <item><term><see cref="TryTrigger"/>（遊戲事件）</term><description>總開關 → 該事件開關 → 冷卻 → 機率 → 情境開關</description></item>
+/// <item><term><see cref="Praise"/>（IPC）</term><description>總開關 → 冷卻 → 情境開關（<b>不看</b>事件開關與機率）</description></item>
+/// <item><term><see cref="Speak"/>（IPC）</term><description>總開關（<b>不看</b>冷卻、機率與情境開關——呼叫端是明確要求念這一句）</description></item>
 /// </list>
 /// 三者都受「同時只播一句」限制，但<b>不是一律丟棄</b>：
 /// 事件與 IPC <see cref="Praise"/> 走的池播放路徑有一個<b>單格待播槽</b>，見 <see cref="PriorityOf"/>。
@@ -190,7 +190,13 @@ public sealed class PraiseService : IDisposable
     /// <summary>這個情境存在嗎（IPC 要分得出「未知情境」與「有情境但沒句子」）。</summary>
     public bool HasCategory(string category) => pool.HasCategory(category);
 
-    /// <summary>IPC <c>TataruPraise.Praise</c>：無視事件開關與機率，但吃冷卻。</summary>
+    /// <summary>
+    /// IPC <c>TataruPraise.Praise</c>：無視事件開關與機率，但吃冷卻。
+    /// </summary>
+    /// <remarks>
+    /// 📌 使用者在設定視窗把這個情境的「啟用」關掉時回 <c>false</c>（擋在 <see cref="PlayFromPool"/>），
+    /// 呼叫端不必自己判斷——回 <c>false</c> 一律當成「這次沒出聲」就對了。
+    /// </remarks>
     public bool Praise(string category)
     {
         if (!config.Enabled) return false;
@@ -295,6 +301,16 @@ public sealed class PraiseService : IDisposable
 
     private bool PlayFromPool(string category)
     {
+        // 🔴 逐情境的啟用開關擋在<b>進待播槽之前</b>：
+        //    ①<see cref="TryTrigger"/>（遊戲事件）與 <see cref="Praise"/>（IPC）都經過這裡，一個閘門就夠；
+        //    ②排進槽裡再丟掉的話，關掉的情境還是會把同優先權、後到的那一句擠掉。
+        //    📌 <see cref="Speak"/> 與試播刻意不走這條路，所以不受這個開關影響。
+        if (!config.IsCategoryEnabled(category))
+        {
+            Svc.Log.Debug($"[TataruPraise] 情境「{category}」在設定裡是關的，這次不出聲。");
+            return false;
+        }
+
         var text = pool.PickCached(category);
         if (text == null)
         {

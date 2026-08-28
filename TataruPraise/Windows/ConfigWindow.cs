@@ -45,7 +45,10 @@ public sealed class ConfigWindow : Window
         this.plugin = plugin;
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(520, 400),
+            // 🔴 「短句」分頁的表格是 7 欄（啟用／情境／短句／冷卻／語音／合成／試播）。
+            //    ImGui 在沒有水平捲軸的表格裡，欄位放不下時是<b>壓縮欄寬</b>而不是切掉，
+            //    失敗形狀＝欄位靜默變窄到看不見內容，所以最小寬要跟著欄數走。
+            MinimumSize = new Vector2(720, 400),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
     }
@@ -190,6 +193,17 @@ public sealed class ConfigWindow : Window
     {
         ImGui.Spacing();
         ImGui.TextDisabled("每個觸發都是獨立開關，預設全部關閉。命中之後還要過全域冷卻與機率。");
+
+        // 🔴 兩層開關要在列上講清楚：這裡開著卻不出聲的時候，使用者第一個念頭是「外掛壞了」。
+        ImGui.TextDisabled("這裡是「事件層」；「短句」分頁每一列最左邊還有「情境層」的勾選——兩層都開才會響。");
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "事件層＝這個遊戲事件要不要去叫那個情境。\n"
+                + "情境層＝那個情境本身要不要出聲（也管別的外掛用 IPC Praise 叫它）。\n"
+                + "任一層關著就不會出聲，而且是靜默的——所以兩層都畫在列上。");
+        }
+
         ImGui.Spacing();
 
         var duty = Config.TriggerDutyComplete;
@@ -641,8 +655,8 @@ public sealed class ConfigWindow : Window
     /// <summary>編輯中的句長下限覆寫草稿（0＝沿用）。</summary>
     private int editingMinLength;
 
-    /// <summary>編輯中的冷卻秒數覆寫草稿（0＝沿用）。</summary>
-    private int editingCooldown;
+    // 📌 冷卻沒有草稿欄位：它改在「短句」表格那一列上，改了就立刻寫進設定。
+    //    這裡再放一份等於同一個值有兩個編輯入口，兩邊會互相蓋掉。
 
     /// <summary>
     /// 已經按過第一下「刪除」的情境（空字串＝沒有）。
@@ -731,7 +745,7 @@ public sealed class ConfigWindow : Window
         => Math.Clamp(Config.MaxPraiseLength, PraiseText.SliderMin, PraiseText.SliderMax);
 
     /// <summary>
-    /// 主畫面的短句表格：情境 ｜ 短句（直接編輯）｜ 語音 ｜ 合成 ｜ 試播。
+    /// 主畫面的短句表格：啟用 ｜ 情境 ｜ 短句（直接編輯）｜ 冷卻（直接編輯）｜ 語音 ｜ 合成 ｜ 試播。
     /// </summary>
     /// <remarks>
     /// 🔴 「這個情境有沒有語音」<b>一定要在列上看得見</b>：沒有 WAV 的情境是靜默不出聲的，
@@ -751,12 +765,18 @@ public sealed class ConfigWindow : Window
         var runningCategory = plugin.Jobs.RunningCategory;
 
         ImGui.TextDisabled("每個情境一句短句。改完按 Enter 或點到別的地方就會寫進 pool.json。");
+        ImGui.TextDisabled("最左邊的勾選＝這個情境要不要出聲；「冷卻」可以直接在列上改。");
 
-        if (!ImGui.BeginTable("##shortLines", 5, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+        if (!ImGui.BeginTable("##shortLines", 7, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
             return;
 
+        ImGui.TableSetupColumn("啟用");
         ImGui.TableSetupColumn("情境");
         ImGui.TableSetupColumn("短句");
+
+        // 🔴 冷卻欄給固定寬：清除鈕「×」只在「有自訂覆寫」時才出現，讓欄寬自動貼合的話，
+        //    改一個數字整張表就會左右跳一下。
+        ImGui.TableSetupColumn("冷卻（秒）", ImGuiTableColumnFlags.WidthFixed, 140f);
         ImGui.TableSetupColumn("語音");
         ImGui.TableSetupColumn("合成");
         ImGui.TableSetupColumn("試播");
@@ -769,6 +789,24 @@ public sealed class ConfigWindow : Window
             var (total, cached) = statsCache.TryGetValue(category, out var s) ? s : (0, 0);
 
             ImGui.TableNextRow();
+
+            // ── 啟用：關掉的情境連別的外掛用 IPC 叫都不出聲（同一列的「試播」不受影響）──
+            ImGui.TableNextColumn();
+            var categoryEnabled = Config.IsCategoryEnabled(category);
+            if (ImGui.Checkbox($"##enable-{i}", ref categoryEnabled))
+                Config.SetCategoryEnabled(category, categoryEnabled);
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    $"「{category}」要不要出聲。\n"
+                    + $"關掉之後：內建觸發不出聲，別的外掛用 IPC Praise（「{category}」）叫它也不出聲（回 false）。\n"
+                    + "「觸發」分頁的逐觸發勾選是另一層——兩層都開才會響。\n"
+                    + "關掉不影響：同一列的「試播」照播，IPC Speak（呼叫端自己指定句子）也照念。");
+            }
+
+            // 🔴 關掉的那一列整列畫灰：這是「掃視就要看得見」的狀態，不可以只藏在勾選框裡。
+            if (!categoryEnabled) ImGui.PushStyleColor(ImGuiCol.Text, ColorUnknown);
 
             ImGui.TableNextColumn();
             ImGui.TextUnformatted(builtIn ? category : category + " *");
@@ -799,6 +837,45 @@ public sealed class ConfigWindow : Window
                     + "改了字就要重新按「合成」——舊語音對不上新句子。");
             }
 
+            // ── 冷卻：列上直接改。顯示的是<b>生效值</b>（自訂覆寫 → 內建 → 全域）──
+            // 🔴 這裡刻意顯示「生效值」而不是「覆寫值」：畫成 0 代表「沒有覆寫」的話，
+            //    使用者看到的是「冷卻 0 秒」，那是錯的資訊而不是「不知道」。
+            ImGui.TableNextColumn();
+            var hasCooldownOverride = Config.HasCooldownOverride(category);
+            var builtinCooldown = PraiseCategory.DefaultCooldownSeconds(category);
+            var fallbackText = builtinCooldown > 0
+                ? $"預設 {builtinCooldown} 秒（來源：內建）"
+                : $"預設 {Math.Max(0, Config.CooldownSeconds)} 秒（來源：全域）";
+            var cooldown = Config.CooldownOf(category);
+
+            ImGui.SetNextItemWidth(110f);
+            if (ImGui.InputInt($"##cd-{i}", ref cooldown, 1, 10))
+                Config.SetCooldown(category, Math.Clamp(cooldown, 0, 3600));
+
+            if (ImGui.IsItemHovered())
+            {
+                var remaining = plugin.Service.CooldownRemainingSecondsOf(category);
+                ImGui.SetTooltip(
+                    (hasCooldownOverride
+                        ? $"這個情境自訂了 {Config.CooldownOf(category)} 秒。"
+                        : "沿用預設，沒有自訂。")
+                    + $"\n{fallbackText}"
+                    + "\n冷卻計時器是逐情境分開算的：這個情境的冷卻不會擋到別的情境。"
+                    + $"\n目前狀態：{(remaining > 0 ? $"還要等 {remaining:F0} 秒" : "現在就可以出聲")}"
+                    + "\n填 0（或按右邊的 ×）＝清掉自訂，退回上面那個預設。");
+            }
+
+            // 只有「真的有自訂覆寫」時才出現清除鈕——沒有覆寫時它按下去什麼都不會做。
+            if (hasCooldownOverride)
+            {
+                ImGui.SameLine(0f, 4f);
+                if (ImGui.SmallButton($"×##cdClear-{i}"))
+                    Config.SetCooldown(category, 0);
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"清掉「{category}」的冷卻自訂，退回{fallbackText}。");
+            }
+
             // ── 語音：有／無要在列上看得見（沒有 WAV ＝ 靜默不出聲）──
             ImGui.TableNextColumn();
             if (total == 0)
@@ -809,7 +886,9 @@ public sealed class ConfigWindow : Window
             }
             else if (total == 1)
             {
-                ImGui.TextColored(cached > 0 ? ColorOk : ColorBad, cached > 0 ? "有" : "無");
+                ImGui.TextColored(
+                    !categoryEnabled ? ColorUnknown : cached > 0 ? ColorOk : ColorBad,
+                    cached > 0 ? "有" : "無");
                 if (ImGui.IsItemHovered())
                 {
                     ImGui.SetTooltip(
@@ -820,7 +899,9 @@ public sealed class ConfigWindow : Window
             }
             else
             {
-                var color = cached == 0 ? ColorBad : cached < total ? ColorUnknown : ColorOk;
+                var color = !categoryEnabled
+                    ? ColorUnknown
+                    : cached == 0 ? ColorBad : cached < total ? ColorUnknown : ColorOk;
                 ImGui.TextColored(color, $"{cached}/{total} 句");
                 if (ImGui.IsItemHovered())
                 {
@@ -863,9 +944,13 @@ public sealed class ConfigWindow : Window
             {
                 ImGui.SetTooltip(
                     cached > 0
-                        ? $"現在播一次「{category}」目前的語音。總開關關著也照播，而且不會推遲真正的冷卻。"
+                        ? $"現在播一次「{category}」目前的語音。總開關與這一列的「啟用」關著也照播，"
+                          + "而且不會推遲真正的冷卻。"
                         : "尚未合成——先按左邊的「合成」做出語音才播得了。");
             }
+
+            // 整列灰字的收尾。🔴 Push 與 Pop 必須成對，中途 continue 會讓後面的列全部變灰。
+            if (!categoryEnabled) ImGui.PopStyleColor();
         }
 
         ImGui.EndTable();
@@ -1080,7 +1165,7 @@ public sealed class ConfigWindow : Window
                             : $"沿用全域冷卻 {effectiveCooldown} 秒。")
                         + "\n冷卻計時器是逐情境分開算的：這個情境的冷卻不會擋到別的情境。"
                         + $"\n目前狀態：{(remaining > 0 ? $"還要等 {remaining:F0} 秒" : "現在就可以出聲")}"
-                        + "\n按「編輯」可以改。");
+                        + "\n要改的話：在上面的短句表格那一列的「冷卻（秒）」直接改。");
                 }
 
                 ImGui.TableNextColumn();
@@ -1273,6 +1358,7 @@ public sealed class ConfigWindow : Window
                 Config.CategoryMaxLength.Remove(category);
                 Config.CategoryMinLength.Remove(category);
                 Config.CategoryCooldownSeconds.Remove(category);
+                Config.CategoryEnabled.Remove(category);
                 Config.Save();
                 Svc.Log.Information($"[TataruPraise] 已刪除情境「{category}」（連同 {removed} 句）。");
             }
@@ -1297,7 +1383,6 @@ public sealed class ConfigWindow : Window
         editingDescription = Config.DescriptionOf(category);
         editingMaxLength = Config.HasMaxLengthOverride(category) ? Config.MaxLengthOf(category) : 0;
         editingMinLength = Config.HasMinLengthOverride(category) ? Config.MinLengthOf(category) : 0;
-        editingCooldown = Config.HasCooldownOverride(category) ? Config.CooldownOf(category) : 0;
         pendingDeleteCategory = string.Empty;
     }
 
@@ -1366,18 +1451,9 @@ public sealed class ConfigWindow : Window
                 + "不放寬下限的話生回來的東西會全部被當成殘句丟掉。");
         }
 
-        var cooldown = editingCooldown;
-        ImGui.SetNextItemWidth(160f);
-        if (ImGui.InputInt("冷卻秒數覆寫（0＝沿用）##editCooldown", ref cooldown, 1, 10))
-            editingCooldown = Math.Clamp(cooldown, 0, 3600);
-
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip(
-                $"只給這個情境用的冷卻秒數。0＝沿用全域的 {Config.CooldownSeconds} 秒。\n"
-                + "優先序：這裡填的 → 內建的（通知 5 秒、警示 15／10／10）→ 全域。\n"
-                + "計時器逐情境分開算，所以多角色連跑的潛艇通知不會被前一個吃掉。");
-        }
+        // 📌 冷卻<b>不在這裡改</b>：它在「短句」表格那一列上直接編輯（改了就立刻生效）。
+        //    同一個值開兩個編輯入口的話，這裡按「儲存」會把使用者剛在列上改的值蓋回草稿的舊值。
+        ImGui.TextDisabled($"冷卻：{Config.CooldownOf(category)} 秒（在上面的短句表格那一列直接改）");
 
         var effective = editingMaxLength > 0
             ? Math.Clamp(editingMaxLength, PraiseText.MinLength, PraiseText.SliderMax)
@@ -1393,7 +1469,6 @@ public sealed class ConfigWindow : Window
             Config.SetDescription(category, editingDescription);
             Config.SetMaxLength(category, editingMaxLength);
             Config.SetMinLength(category, editingMinLength);
-            Config.SetCooldown(category, editingCooldown);
             editingCategory = string.Empty;
             statsRefreshedUtc = DateTime.MinValue;
         }
@@ -1408,7 +1483,6 @@ public sealed class ConfigWindow : Window
             editingDescription = PraiseCategory.DefaultDescription(category);
             editingMaxLength = 0;
             editingMinLength = 0;
-            editingCooldown = 0;
         }
 
         if (ImGui.IsItemHovered())

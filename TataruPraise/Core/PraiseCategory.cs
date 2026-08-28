@@ -29,6 +29,15 @@ public static class PraiseCategory
     /// <summary>AutoRetainer：潛水艇整隊回港／僱員探險全部收完。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
     public const string Submarine = "潛艇";
 
+    /// <summary>
+    /// AutoRetainer：僱員探險完成。<b>鍵名由 IPC 呼叫端逐字使用。</b>
+    /// </summary>
+    /// <remarks>
+    /// 📌 跟 <see cref="Submarine"/> 是<b>兩個不同的鍵</b>，刻意的：潛艇回港是「整隊都回來了」，
+    /// 僱員探險是頻率高得多的日常事件。合成一個鍵的話，想只聽潛艇的人沒辦法單獨關掉僱員。
+    /// </remarks>
+    public const string Retainer = "僱員";
+
     /// <summary>Artisan：整份製作清單做完。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
     public const string Crafting = "製作";
 
@@ -113,6 +122,7 @@ public static class PraiseCategory
         Login,
         GilMilestone,
         Submarine,
+        Retainer,
         Crafting,
         Cosmic,
         LowHp,
@@ -146,6 +156,7 @@ public static class PraiseCategory
         [Login] = "這是提示音，不是對話：前輩剛登入遊戲。只輸出一句極短提示（2~12 字），像脫口而出的一句話；不要鋪陳、不要說明、不要接第二個子句。",
         [GilMilestone] = "這是提示音，不是對話：前輩存的 Gil 剛跨過一個新的里程碑。只輸出一句極短提示（2~12 字），像脫口而出的一句話；不要鋪陳、不要說明、不要接第二個子句。",
         [Submarine] = "這是通知，不是誇獎：前輩派出去的潛水艇整隊平安回港了（或僱員的探險全部收完了）。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
+        [Retainer] = "這是通知，不是誇獎：前輩的僱員探險完成了，東西可以收了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Crafting] = "這是通知，不是誇獎：前輩把整份製作清單做完了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Cosmic] = "這是通知，不是誇獎：前輩在宇宙探索的任務拿到了金評價。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [LowHp] = "這是戰鬥警示，不是誇獎：前輩的血量掉到危險線以下了，正在戰鬥中。只輸出一句 2~6 字的極短句，像喊出來的一樣；不要稱讚、不要說明、不要鋪陳。",
@@ -191,6 +202,7 @@ public static class PraiseCategory
         [Login] = 12,
         [GilMilestone] = 12,
         [Submarine] = 12,
+        [Retainer] = 12,
         [Crafting] = 12,
         [Cosmic] = 12,
         [LowHp] = 8,
@@ -228,6 +240,7 @@ public static class PraiseCategory
         [Login] = 2,
         [GilMilestone] = 2,
         [Submarine] = 2,
+        [Retainer] = 2,
         [Crafting] = 2,
         [Cosmic] = 2,
         [LowHp] = 2,
@@ -264,6 +277,7 @@ public static class PraiseCategory
     public static readonly Dictionary<string, int> Cooldowns = new()
     {
         [Submarine] = 5,
+        [Retainer] = 5,
         [Crafting] = 5,
         [Cosmic] = 5,
         [LowHp] = 15,

@@ -21,7 +21,10 @@ public static class IpcContract
     /// <summary>直接念出指定的句子。<c>Func&lt;string, bool&gt;</c>，回傳「有沒有排進播放」。</summary>
     public const string Speak = "TataruPraise.Speak";
 
-    /// <summary>從指定情境的誇獎池挑一句念。<c>Func&lt;string, bool&gt;</c>，回傳「有沒有排進播放」。</summary>
+    /// <summary>
+    /// 從指定情境的誇獎池挑一句念。<c>Func&lt;string, bool&gt;</c>，回傳「有沒有排進播放」。
+    /// 📌 使用者可以在設定視窗<b>單獨關掉某個情境</b>；關掉時這裡回 <c>false</c>（不出聲，也不算錯誤）。
+    /// </summary>
     public const string Praise = "TataruPraise.Praise";
 
     /// <summary>現在有沒有辦法出聲（總開關開著、而且有可播的內容）。<c>Func&lt;bool&gt;</c>。</summary>
