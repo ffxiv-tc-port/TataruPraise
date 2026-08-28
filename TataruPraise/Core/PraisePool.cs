@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -312,6 +313,174 @@ public sealed class PraisePool
         {
             return pool.TryGetValue(category, out var list) ? list.Count : 0;
         }
+    }
+
+    /// <summary>
+    /// 要列在 UI 上、也是「全部擴充」要跑的情境清單。
+    /// </summary>
+    /// <remarks>
+    /// 內建情境在前（順序＝<see cref="PraiseCategory.All"/>），後面接 <c>pool.json</c> 裡出現過但
+    /// 不在內建清單裡的自訂鍵。
+    /// <para>
+    /// 🔴 自訂鍵一定要列出來：<see cref="Load"/> 刻意保留不認得的鍵，如果 UI 只畫內建的四個，
+    /// 使用者自己加的情境就會變成「檔案裡有、畫面上沒有」——那比沒有這個功能還糟。
+    /// </para>
+    /// <para>
+    /// 📌 自訂鍵用 ordinal 排序，不用字典的列舉順序：<see cref="Dictionary{TKey,TValue}"/> 的列舉順序
+    /// 沒有保證，拿它當 UI 順序會讓列偶爾跳動。
+    /// </para>
+    /// </remarks>
+    public List<string> Categories()
+    {
+        var extras = new List<string>();
+        lock (gate)
+        {
+            foreach (var key in pool.Keys)
+            {
+                if (Array.IndexOf(PraiseCategory.All, key) >= 0) continue;
+                extras.Add(key);
+            }
+        }
+
+        extras.Sort(StringComparer.Ordinal);
+
+        var result = new List<string>(PraiseCategory.All.Length + extras.Count);
+        result.AddRange(PraiseCategory.All);
+        result.AddRange(extras);
+        return result;
+    }
+
+    /// <summary>某個情境目前的所有句子（快照；情境不存在就回空清單）。</summary>
+    public List<string> TextsOf(string category)
+    {
+        lock (gate)
+        {
+            if (!pool.TryGetValue(category, out var list)) return [];
+
+            var texts = new List<string>(list.Count);
+            foreach (var line in list) texts.Add(line.Text);
+            return texts;
+        }
+    }
+
+    /// <summary>
+    /// 把整池重置回 <see cref="DefaultPool"/> 的內建句子。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不可回復的破壞性操作</b>，只能由使用者在設定視窗做完兩段式確認之後觸發，
+    /// 絕不可以在載入時、改設定時、或任何自動路徑上跑。
+    /// <para>
+    /// 🔴 <b>備份不成功就整個中止，一個位元組都不動。</b>刪的是使用者自己攢了很久的整池句子，
+    /// 沒有備份就不准動手。備份＝把現有的 <c>pool.json</c> 原封不動複製成
+    /// <c>pool.backup-yyyyMMdd-HHmmss.json</c> 放在同一個資料夾；<b>不清舊備份、不輪替</b>
+    /// （那也是使用者的資料，要刪由他自己刪）。
+    /// </para>
+    /// <para>
+    /// 🔴 刪 WAV 的範圍<b>只有「重置前池裡真的存在的句子」的雜湊檔名</b>——
+    /// <b>不掃 <c>cache/</c> 目錄</b>。掃目錄刪檔會把使用者手動放進去的東西一起清掉，而且是靜默的。
+    /// </para>
+    /// <para>
+    /// ⚠️ 內建那 28 句的 WAV <b>也會一起被刪掉</b>（它們本來就在舊池裡）：重置之後寫回去的是
+    /// <b>沒有語音</b>的預設池，那 28 句要重新按一次「預合成」。這是刻意的——
+    /// 讓「重置完的狀態」永遠是同一個，不會因為使用者以前合成過什麼而長得不一樣。
+    /// </para>
+    /// </remarks>
+    /// <param name="backupPath">舊池的備份絕對路徑；原本就沒有 <c>pool.json</c> 時是空字串。</param>
+    /// <param name="removedLines">重置前池裡有幾句（重置中止時是 0）。</param>
+    /// <param name="deletedWavs">實際刪掉幾個 WAV 檔。</param>
+    /// <param name="error">中止原因；成功是 <c>null</c>。</param>
+    /// <returns>有沒有真的重置。</returns>
+    public bool ResetToDefault(out string backupPath, out int removedLines, out int deletedWavs, out string? error)
+    {
+        backupPath = string.Empty;
+        removedLines = 0;
+        deletedWavs = 0;
+        error = null;
+
+        // ① 先抄下「重置前有哪些句子」——等一下就照這份清單刪 WAV，不掃目錄。
+        var oldTexts = new HashSet<string>(StringComparer.Ordinal);
+        var oldCount = 0;
+        lock (gate)
+        {
+            foreach (var list in pool.Values)
+            {
+                foreach (var line in list)
+                {
+                    oldCount++;
+                    oldTexts.Add(line.Text);
+                }
+            }
+        }
+
+        // ② 備份。失敗就直接放棄，不進第三步。
+        try
+        {
+            Directory.CreateDirectory(dataDir);
+            if (File.Exists(poolPath))
+            {
+                var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+                var candidate = Path.Combine(dataDir, $"pool.backup-{stamp}.json");
+
+                // 同一秒內按第二次也不可以蓋掉上一份備份。
+                for (var i = 2; i < 100 && File.Exists(candidate); i++)
+                    candidate = Path.Combine(dataDir, $"pool.backup-{stamp}-{i}.json");
+
+                File.Copy(poolPath, candidate, overwrite: false);
+                backupPath = candidate;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"備份舊池失敗（{ex.Message}），什麼都沒有動。";
+            Svc.Log.Information($"[TataruPraise] 重置誇獎池中止：{error}");
+            return false;
+        }
+
+        // ③ 換成內建預設池（含自訂鍵在內，整個字典重建）。
+        lock (gate)
+        {
+            pool = [];
+            foreach (var (category, lines) in DefaultPool.Lines)
+            {
+                var target = new List<PraiseLine>(lines.Count);
+                foreach (var text in lines) target.Add(new PraiseLine { Text = text });
+                pool[category] = target;
+            }
+
+            foreach (var key in PraiseCategory.All) pool.TryAdd(key, []);
+        }
+
+        Save();
+        removedLines = oldCount;
+
+        // ④ 刪 WAV：只刪剛才抄下來那份清單裡的句子。
+        foreach (var text in oldTexts)
+        {
+            var path = CachePathFor(text);
+            try
+            {
+                if (!File.Exists(path)) continue;
+                File.Delete(path);
+                deletedWavs++;
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Information($"[TataruPraise] 刪除語音快取失敗（{path}）：{ex.Message}");
+            }
+        }
+
+        var where = backupPath.Length > 0 ? backupPath : "（原本就沒有 pool.json，沒有備份）";
+        Svc.Log.Information(
+            $"[TataruPraise] 重置誇獎池：清掉 {removedLines} 句、刪掉 {deletedWavs} 個語音快取，舊池備份於 {where}。");
+        return true;
+    }
+
+    /// <summary>內建預設池一共有幾句（UI 的確認文字要寫得出這個數字）。</summary>
+    public static int DefaultLineCount()
+    {
+        var n = 0;
+        foreach (var lines in DefaultPool.Lines.Values) n += lines.Count;
+        return n;
     }
 
     /// <summary>某個情境有幾句「語音快取檔真的在磁碟上」。</summary>

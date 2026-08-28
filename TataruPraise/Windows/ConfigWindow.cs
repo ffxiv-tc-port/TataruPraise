@@ -317,19 +317,57 @@ public sealed class ConfigWindow : Window
     private readonly Dictionary<string, (int Total, int Cached)> statsCache = [];
     private DateTime statsRefreshedUtc = DateTime.MinValue;
 
+    /// <summary>
+    /// 要畫成表格列的情境清單（跟著統計一起、每秒重取一次）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 來源是 <see cref="PraisePool.Categories"/>，<b>包含 pool.json 裡的自訂鍵</b>——
+    /// 內建四個在前，自訂的接在後面。
+    /// </remarks>
+    private List<string> categoryList = [];
+
     /// <summary>池裡超過目前句長上限的句數（跟著上面的統計一起、每秒重算一次）。</summary>
     private int overLimitCount;
 
     /// <summary>「移除超過上限的句子」按過第一下了嗎（第二下才真的刪）。</summary>
     private bool prunePending;
 
+    /// <summary>「重置為預設池」按過第一下了嗎（第二下才真的重置）。</summary>
+    private bool resetPending;
+
+    /// <summary>上一幀有沒有工作在跑（用來在工作剛結束時立刻重算統計）。</summary>
+    private bool jobWasRunning;
+
+    /// <summary>「每次生成句數」輸入框的下界。</summary>
+    private const int GenerateCountMin = 1;
+
+    /// <summary>
+    /// 「每次生成句數」輸入框的上界。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 這只夾<b>使用者新輸入的值</b>。設定檔裡原本存著更大的數字（舊版滑桿到 50）不會被動到，
+    /// <see cref="Core.PoolJobs"/> 那邊的上界仍然是 50——把既有設定靜默改小是回退使用者的選擇。
+    /// </remarks>
+    private const int GenerateCountMax = 30;
+
     private void RefreshStatsIfStale()
     {
         var now = DateTime.UtcNow;
-        if (statsCache.Count > 0 && now - statsRefreshedUtc < TimeSpan.FromSeconds(1)) return;
+
+        // 工作剛跑完就立刻重算一次：不然數字要等到下一個整秒才跳，看起來像「按了沒反應」。
+        var running = plugin.Jobs.IsRunning;
+        var justFinished = jobWasRunning && !running;
+        jobWasRunning = running;
+
+        if (!justFinished && categoryList.Count > 0 && now - statsRefreshedUtc < TimeSpan.FromSeconds(1)) return;
         statsRefreshedUtc = now;
 
-        foreach (var category in PraiseCategory.All)
+        categoryList = plugin.Pool.Categories();
+
+        // 🔴 重算前先清掉：自訂情境鍵會因為重置／手改 pool.json 而消失，
+        // 只覆寫不清除的話，畫面上會留著一列已經不存在的情境。
+        statsCache.Clear();
+        foreach (var category in categoryList)
             statsCache[category] = (plugin.Pool.CountOf(category), plugin.Pool.CachedCountOf(category));
 
         overLimitCount = plugin.Pool.CountLongerThan(ClampedMaxLength());
@@ -339,27 +377,85 @@ public sealed class ConfigWindow : Window
     private int ClampedMaxLength()
         => Math.Clamp(Config.MaxPraiseLength, PraiseText.SliderMin, PraiseText.SliderMax);
 
+    /// <summary>
+    /// 情境表格：每個情境一列，句數／已合成數／單獨生成／單獨合成。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 每一列的兩顆按鈕在<b>任何</b>工作跑的時候都是 disabled——不是只有同一列的那個。
+    /// 池是整份重寫的，兩個工作同時寫等於後寫的把先寫的成果整個蓋掉。
+    /// （真正的互斥在 <see cref="Core.PoolJobs"/> 的旗標，這裡的 disabled 只是讓使用者看得出來。）
+    /// <para>
+    /// 📌 正在處理的那一列會在情境名旁邊標「（進行中）」：整體進度在下面的結果行上，
+    /// 但「現在動的是哪一列」要在列上看得見。
+    /// </para>
+    /// </remarks>
     private void DrawPoolStats()
     {
         RefreshStatsIfStale();
 
+        var running = plugin.Jobs.IsRunning;
+        var runningCategory = plugin.Jobs.RunningCategory;
+        var effectiveCount = Math.Clamp(Config.GenerateCountPerCategory, 1, 50);
+
         ImGui.TextDisabled("誇獎池（每個情境：句數／已合成語音的句數）");
-        if (ImGui.BeginTable("##poolStats", 3, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+
+        // 「每次生成句數」放在表頭旁邊：它決定的就是下面每一列「生成」按下去會跟模型要幾句。
+        ImGui.SameLine();
+        var count = Config.GenerateCountPerCategory;
+        ImGui.SetNextItemWidth(110f);
+        if (ImGui.InputInt("每次生成句數##genCount", ref count, 1, 5))
+        {
+            Config.GenerateCountPerCategory = Math.Clamp(count, GenerateCountMin, GenerateCountMax);
+            Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                $"按單一情境的「生成」、或按「全部擴充」時，每個情境跟模型要幾句（{GenerateCountMin}～{GenerateCountMax}）。\n"
+                + "實際入池的會比較少：太長、太短、沒標點、跟池裡重複的都會被丟掉，\n"
+                + "所以結果行印的是「要 N 句、新增 M 句」。");
+        }
+
+        if (ImGui.BeginTable("##poolStats", 5, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
         {
             ImGui.TableSetupColumn("情境");
             ImGui.TableSetupColumn("句數");
             ImGui.TableSetupColumn("已有語音");
+            ImGui.TableSetupColumn("生成");
+            ImGui.TableSetupColumn("語音");
             ImGui.TableHeadersRow();
 
-            foreach (var category in PraiseCategory.All)
+            var customCount = 0;
+
+            for (var i = 0; i < categoryList.Count; i++)
             {
+                var category = categoryList[i];
+                var custom = Array.IndexOf(PraiseCategory.All, category) < 0;
+                if (custom) customCount++;
+
                 var (total, cached) = statsCache.TryGetValue(category, out var s) ? s : (0, 0);
 
                 ImGui.TableNextRow();
+
                 ImGui.TableNextColumn();
-                ImGui.TextUnformatted(category);
+                ImGui.TextUnformatted(custom ? category + " *" : category);
+                if (custom && ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        "pool.json 裡的自訂情境，這一版沒有對應的遊戲觸發來源。\n"
+                        + "照樣可以生成與合成，也可以用 IPC 指定這個情境播。");
+                }
+
+                if (running && runningCategory == category)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(ColorUnknown, "（進行中）");
+                }
+
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(total.ToString());
+
                 ImGui.TableNextColumn();
                 if (cached == 0 && total > 0)
                     ImGui.TextColored(ColorBad, "0");
@@ -367,14 +463,103 @@ public sealed class ConfigWindow : Window
                     ImGui.TextColored(ColorUnknown, cached.ToString());
                 else
                     ImGui.TextColored(ColorOk, cached.ToString());
+
+                ImGui.TableNextColumn();
+                ImGui.BeginDisabled(running);
+                if (ImGui.Button($"生成##gen-{i}"))
+                    plugin.Jobs.StartExpandCategory(category);
+                ImGui.EndDisabled();
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        $"只對「{category}」發一次 Gemini 請求，要 {effectiveCount} 句，只寫這一個情境。\n"
+                        + "其他情境完全不動。新句子還沒有語音，要再按同一列的「合成」。");
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.BeginDisabled(running);
+                if (ImGui.Button($"合成##syn-{i}"))
+                    plugin.Jobs.StartSynthesizeCategory(category);
+                ImGui.EndDisabled();
+
+                if (ImGui.IsItemHovered())
+                {
+                    var missing = total - cached;
+                    ImGui.SetTooltip(
+                        missing > 0
+                            ? $"把「{category}」還缺語音的 {missing} 句送去橋接合成（可能要跑好幾分鐘）。"
+                            : $"「{category}」目前沒有缺語音的句子。");
+                }
             }
 
             ImGui.EndTable();
+
+            if (customCount > 0)
+                ImGui.TextDisabled("* ＝ pool.json 裡的自訂情境，這一版沒有遊戲觸發來源。");
         }
+
+        ImGui.Spacing();
+        DrawResetPool();
 
         ImGui.TextDisabled("池與語音快取的位置");
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip($"{plugin.Pool.PoolPath}\n{plugin.Pool.CacheDirectory}");
+    }
+
+    /// <summary>
+    /// 「重置為預設池」：兩段式確認。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不可回復</b>，而且動到的是使用者自己攢出來的整池句子。所以：
+    /// ①第一下只是展開確認，第二下才真的執行；②執行前一定先備份 <c>pool.json</c>；
+    /// ③備份失敗就整個中止（見 <see cref="PraisePool.ResetToDefault"/>）。
+    /// <para>
+    /// 📌 確認文字把<b>會刪什麼</b>寫在列上，不藏 tooltip——這是使用者按下去之前唯一的煞車。
+    /// </para>
+    /// </remarks>
+    private void DrawResetPool()
+    {
+        var defaultCount = PraisePool.DefaultLineCount();
+
+        ImGui.BeginDisabled(plugin.Jobs.IsRunning);
+
+        if (!resetPending)
+        {
+            if (ImGui.Button("重置為預設池##resetPool"))
+                resetPending = true;
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    $"把整池丟掉，回到內建的 {defaultCount} 句。\n"
+                    + "🔴 不可回復。按下去之後還會再確認一次才真的執行。\n"
+                    + "執行前會先把現在的 pool.json 備份成同一個資料夾裡的 pool.backup-<日期-時間>.json。");
+            }
+        }
+        else
+        {
+            ImGui.TextColored(
+                ColorBad,
+                $"再按一次確認：會刪除目前池內所有句子與對應 WAV 快取，回到內建 {defaultCount} 句。");
+            ImGui.TextColored(
+                ColorUnknown,
+                "執行前會先把現在的 pool.json 備份到同一個資料夾（pool.backup-<日期-時間>.json）。"
+                + $"內建那 {defaultCount} 句重置後也沒有語音，要重新按一次「預合成語音快取」。");
+
+            if (ImGui.Button("確定重置##resetConfirm"))
+            {
+                plugin.Jobs.StartResetPool();
+                resetPending = false;
+                statsRefreshedUtc = DateTime.MinValue;
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("先不要##resetCancel"))
+                resetPending = false;
+        }
+
+        ImGui.EndDisabled();
     }
 
     private void DrawGeminiSettings()
@@ -408,13 +593,9 @@ public sealed class ConfigWindow : Window
                 + "gemini-2.x-flash 系列對新金鑰已停用，填了會回 404。");
         }
 
-        var count = Config.GenerateCountPerCategory;
-        ImGui.SetNextItemWidth(200f);
-        if (ImGui.SliderInt("每個情境生幾句##genCount", ref count, 1, 50))
-        {
-            Config.GenerateCountPerCategory = count;
-            Config.Save();
-        }
+        // 📌 「每個情境生幾句」搬到上面的情境表格表頭旁邊了（同一個設定，沒有換欄位）：
+        //    那顆數字直接決定每一列「生成」按下去的行為，放在按鈕旁邊才看得懂。
+        ImGui.TextDisabled("（每次生成句數在上面的情境表格旁邊）");
     }
 
     private void DrawJobButtons()
@@ -422,17 +603,24 @@ public sealed class ConfigWindow : Window
         var running = plugin.Jobs.IsRunning;
 
         ImGui.BeginDisabled(running);
-        if (ImGui.Button("擴充誇獎池##expand"))
+        if (ImGui.Button("全部擴充##expand"))
             plugin.Jobs.StartExpandPool();
         ImGui.EndDisabled();
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("用 Gemini 針對每個情境各生一批新句子，寫進 pool.json。新句子還沒有語音。");
+        {
+            ImGui.SetTooltip(
+                "用 Gemini 擴充所有情境，寫進 pool.json。新句子還沒有語音。\n"
+                + "📌 是「每個情境各發一次請求、各要一樣多句」，順序跑、彼此獨立——\n"
+                + "某一個情境失敗不會影響其他情境。\n"
+                + "各情境實際入池的數量還是會有差（過濾與重複的良率不同），\n"
+                + "落後的那一類用上面表格那一列的「生成」單獨補就好。");
+        }
 
         ImGui.SameLine();
 
         ImGui.BeginDisabled(running);
-        if (ImGui.Button("預合成語音快取##precache"))
+        if (ImGui.Button("預合成全部##precache"))
             plugin.Jobs.StartPrecacheAudio();
         ImGui.EndDisabled();
 

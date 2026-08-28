@@ -46,6 +46,32 @@ public sealed class GenerateStats
         if (Duplicate > 0) parts.Add($"重複 {Duplicate} 句");
         return "丟棄 " + string.Join("、", parts);
     }
+
+    /// <summary>
+    /// 「丟棄超長 N 句、過短 M 句…」；一句都沒丟也會印出「丟棄超長 0 句」。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 與 <see cref="Describe"/> 的差別是<b>超長那一項一律印出來，即使是 0</b>。
+    /// 逐情境生成的結果行是使用者判斷「這個情境為什麼比較少」的唯一依據——
+    /// 「沒有丟」與「這一項沒被統計過」必須分得出來，把 0 藏起來會讓人以為是後者。
+    /// </remarks>
+    public string DescribeAlways()
+    {
+        var parts = new List<string>(4) { $"丟棄超長 {TooLong} 句" };
+        if (TooShort > 0) parts.Add($"過短 {TooShort} 句");
+        if (NoPunctuation > 0) parts.Add($"沒標點 {NoPunctuation} 句");
+        if (Duplicate > 0) parts.Add($"重複 {Duplicate} 句");
+        return string.Join("、", parts);
+    }
+
+    /// <summary>把另一份統計併進來（「全部擴充」逐情境各記一份，最後彙總成整批的數字）。</summary>
+    public void Add(GenerateStats other)
+    {
+        TooLong += other.TooLong;
+        TooShort += other.TooShort;
+        NoPunctuation += other.NoPunctuation;
+        Duplicate += other.Duplicate;
+    }
 }
 
 /// <summary>
