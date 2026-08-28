@@ -109,6 +109,30 @@ public static class TtsBridge
         }
     }
 
+    /// <summary>上一次合成的結果：<c>null</c>＝這次啟動後<b>還沒試過</b>。</summary>
+    /// <remarks>
+    /// 🔴 「還沒試過」與「試過但失敗」必須分得開。設定視窗上那一列若把「沒試過」畫成
+    /// 看起來正常的樣子，使用者會以為橋接是通的——而真相是我們根本沒連過。
+    /// <para>
+    /// 📌 這裡記的是<b>合成</b>（<see cref="SynthesizeAsync"/>），不含 <c>/speakers</c> 探測。
+    /// 兩者失敗的原因不一樣（探測通了不代表合成得出來，例如聲線沒設定就是 404）。
+    /// </para>
+    /// <para>
+    /// ⚠️ 只有靜態欄位、沒有鎖：寫入端是背景合成工作，讀取端是 UI 執行緒。
+    /// 讀到上一瞬間的值對「顯示上次結果」沒有影響，加鎖反而讓 UI 有機會等背景 I/O。
+    /// </para>
+    /// </remarks>
+    public static bool? LastSynthesisOk { get; private set; }
+
+    /// <summary>上一次合成的<b>本機</b>時間；還沒試過就是 <see cref="DateTime.MinValue"/>。</summary>
+    public static DateTime LastSynthesisAtLocal { get; private set; } = DateTime.MinValue;
+
+    private static void RecordSynthesis(bool ok)
+    {
+        LastSynthesisOk = ok;
+        LastSynthesisAtLocal = DateTime.Now;
+    }
+
     /// <summary>
     /// 合成一句話，回 WAV bytes。失敗回 <c>null</c>。
     /// </summary>
@@ -143,6 +167,7 @@ public static class TtsBridge
                     _ => string.Empty,
                 };
                 Svc.Log.Information($"[TataruPraise] 語音合成失敗：HTTP {code}{hint}（{url}）");
+                RecordSynthesis(false);
                 return null;
             }
 
@@ -151,14 +176,17 @@ public static class TtsBridge
             {
                 // WAV 檔頭至少 44 bytes。比這短一定不是音訊，不要送進 NAudio。
                 Svc.Log.Information($"[TataruPraise] 語音合成回傳的內容太短（{bytes.Length} bytes），當成失敗。");
+                RecordSynthesis(false);
                 return null;
             }
 
+            RecordSynthesis(true);
             return bytes;
         }
         catch (Exception ex)
         {
             Svc.Log.Information($"[TataruPraise] 語音合成失敗：{ex.Message}（{url}）");
+            RecordSynthesis(false);
             return null;
         }
     }

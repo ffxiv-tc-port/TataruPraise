@@ -3,21 +3,30 @@ using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using System.Numerics;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
 using Lumina.Excel.Sheets;
 
 namespace TataruPraise.Core;
 
 /// <summary>
-/// 遊戲事件 → 誇獎的四條觸發線。
+/// 遊戲事件 → 出聲的內建觸發線。
 /// </summary>
 /// <remarks>
 /// 🔴 <b>刻意不做任何靠聊天文字比對的觸發</b>（成就、製作大成功…）。台服的中文訊息字面沒辦法離線確定，
 /// 憑印象或照國際服寫死一定錯，而且錯法是靜默的（比不到就永遠不觸發，看起來像功能沒做）。
-/// 這四條全部是 Dalamud 的結構化事件或直接讀遊戲數值，沒有字串比對。
+/// 全部走 Dalamud 的<b>結構化</b>事件或直接讀遊戲數值：
+/// 密語看的是 <see cref="XivChatType.TellIncoming"/> <b>這個列舉值</b>，不是訊息內容；
+/// 組隊邀請與交易請求看的是<b>那個視窗有沒有被建出來</b>，不是視窗裡的字。
+/// <para>
+/// 🔴 <b>只讀狀態、只出聲</b>：不施放、不走位、不改目標、不按任何按鈕。
+/// </para>
 /// </remarks>
 public sealed class TriggerWatcher : IDisposable
 {
@@ -77,6 +86,45 @@ public sealed class TriggerWatcher : IDisposable
     /// <summary>Gil 讀取失敗過就不再重試，也只寫一次 log（避免每 5 秒洗一行）。</summary>
     private bool gilReadBroken;
 
+    /// <summary>
+    /// 組隊邀請彈窗的 addon 名。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不可以用 <c>SelectYesno</c></b>：那是通用的是／否對話框，
+    /// 從「要不要丟棄道具」到「要不要退出副本」都用它——拿它當判準會變成什麼都喊一聲。
+    /// <para>
+    /// 📌 <b>名字的離線證據</b>（2026-08-29 掃台服 <c>ffxiv_dx11.exe</c>，先用
+    /// <c>SelectYesno</c>／<c>Trade</c>／<c>_PartyList</c> 等一定存在的名字校準過掃描）：
+    /// 執行檔裡<b>沒有</b> <c>PartyInvite</c>、<c>InviteReply</c>、<c>_PartyInvite</c> 這些名字；
+    /// 「有人要你答應一件事」的彈窗全部是 <c>_Notification*</c> 這一族——
+    /// <c>_NotificationFriend</c>（好友邀請）、<c>_NotificationFcJoin</c>（部隊邀請）、
+    /// <c>_NotificationLinkShell</c>（通訊貝邀請）、<c>_NotificationReadyCheck</c>（準備確認）…
+    /// 其中對應組隊的就是 <c>_NotificationParty</c>。
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>還沒有實機驗過</b>。同族命名是很強的間接證據，但「哪一個 addon 是收到邀請時彈出的那個」
+    /// 終究要開遊戲才算數。addon 名對不上的失敗形狀是<b>不響、不崩、也沒有錯誤訊息</b>
+    /// （<see cref="IAddonLifecycle"/> 對沒出現過的名字不會抱怨），所以真的沒響的時候，
+    /// 第一件事是確認這個字串，不是去查冷卻或機率——啟動時的 <c>Information</c> 記錄有印出來。
+    /// </para>
+    /// </remarks>
+    internal const string PartyInviteAddon = "_NotificationParty";
+
+    /// <summary>
+    /// 交易視窗的 addon 名。
+    /// </summary>
+    /// <remarks>
+    /// 📌 台服執行檔裡跟交易有關的 UI 只有 <c>Trade</c> 與 <c>TradeMultiple</c>
+    /// （<c>TradeMultiple</c> 是「一次交多個」那個，不是請求）；艦隊裡 Lifestream 與 AutoRetainer
+    /// 也都是用 <c>"Trade"</c> 去抓交易視窗的，所以這個名字是確定的。
+    /// <para>
+    /// ⚠️ <b>這個視窗在「自己主動發起交易」時也會被建出來</b>，所以那時候也會喊一聲。
+    /// 沒有辦法只靠 <c>PostSetup</c> 分辨是誰發起的——要分辨得去讀視窗內容，
+    /// 那是為了一個提示音不值得的複雜度。
+    /// </para>
+    /// </remarks>
+    internal const string TradeAddon = "Trade";
+
     private bool disposed;
 
     public TriggerWatcher(Configuration config, PraiseService service)
@@ -89,7 +137,13 @@ public sealed class TriggerWatcher : IDisposable
         Svc.ClientState.LevelChanged += OnLevelChanged;
         Svc.ClientState.Login += OnLogin;
         Svc.ClientState.Logout += OnLogout;
+        Svc.ClientState.CfPop += OnCfPop;
+        Svc.Chat.ChatMessage += OnChatMessage;
         Svc.Framework.Update += OnFrameworkUpdate;
+
+        // 📌 註冊即使名字不存在也不會出錯——那正是它靜默失敗的原因，見常數上的註解。
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, PartyInviteAddon, OnPartyInviteAddon);
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, TradeAddon, OnTradeAddon);
     }
 
     public void Dispose()
@@ -101,7 +155,79 @@ public sealed class TriggerWatcher : IDisposable
         Svc.ClientState.LevelChanged -= OnLevelChanged;
         Svc.ClientState.Login -= OnLogin;
         Svc.ClientState.Logout -= OnLogout;
+        Svc.ClientState.CfPop -= OnCfPop;
+        Svc.Chat.ChatMessage -= OnChatMessage;
         Svc.Framework.Update -= OnFrameworkUpdate;
+
+        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, PartyInviteAddon, OnPartyInviteAddon);
+        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, TradeAddon, OnTradeAddon);
+    }
+
+    /// <summary>
+    /// 收到密語。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 判準<b>只有 <see cref="XivChatType.TellIncoming"/> 這個列舉值</b>，一個字都不比對。
+    /// 台服的中文字面沒辦法離線確定，比對文字一定錯而且錯法是靜默的。
+    /// <para>
+    /// 📌 自己送出去的密語是 <see cref="XivChatType.TellOutgoing"/>（12），
+    /// 跟 <see cref="XivChatType.TellIncoming"/>（13）是不同的值，所以不會自己喊自己。
+    /// </para>
+    /// <para>
+    /// 🔴 <paramref name="isHandled"/> <b>一個字都不能動</b>：那是給「要不要把這則訊息吃掉」用的，
+    /// 我們只是旁聽。動了它會讓別的外掛（或聊天視窗本身）收不到訊息，而且完全不會有人知道是我們幹的。
+    /// </para>
+    /// <para>
+    /// ⚠️ 這條線<b>不擲觸發機率骰</b>（等同 100%），跟警示同一個理由：
+    /// 30% 機率才響一次的通知比沒有還糟——使用者會學會不相信它。冷卻照走（內建 5 秒）。
+    /// </para>
+    /// </remarks>
+    private void OnChatMessage(
+        XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled)
+    {
+        if (!config.TriggerTellReceived) return;
+        if (type != XivChatType.TellIncoming) return;
+
+        service.TryTrigger(PraiseCategory.TellReceived, chanceOverride: 100);
+    }
+
+    /// <summary>
+    /// 副本配對排到。
+    /// </summary>
+    /// <remarks>
+    /// 📌 情境鍵用的是既有的「副本排到」——NotificationMaster 之類的外部呼叫端也是叫這個鍵。
+    /// 兩路並存是刻意的：<b>逐情境冷卻（內建 5 秒）會把緊接著的第二次吸掉</b>，不會聽到兩聲。
+    /// <para>
+    /// 📌 參數是 <c>ContentFinderCondition</c>，這裡<b>用不到</b>——只是「排到了」這件事本身。
+    /// 不去讀它的欄位也就不必擔心台服的表布局。
+    /// </para>
+    /// </remarks>
+    private void OnCfPop(ContentFinderCondition condition)
+    {
+        if (!config.TriggerDutyPop) return;
+
+        service.TryTrigger(PraiseCategory.DutyPop, chanceOverride: 100);
+    }
+
+    /// <summary>收到組隊邀請（邀請彈窗被建出來）。</summary>
+    /// <remarks>
+    /// 🔴 <b>只是聽這個視窗出現，不碰它</b>——不按同意、不按拒絕、不讀它的欄位。
+    /// 📌 <paramref name="args"/> 不使用：我們要的資訊就是「它出現了」。
+    /// </remarks>
+    private void OnPartyInviteAddon(AddonEvent type, AddonArgs args)
+    {
+        if (!config.TriggerPartyInvite) return;
+
+        service.TryTrigger(PraiseCategory.PartyInvite, chanceOverride: 100);
+    }
+
+    /// <summary>收到交易請求（交易視窗被建出來）。</summary>
+    /// <remarks>🔴 只是聽它出現，不碰它。</remarks>
+    private void OnTradeAddon(AddonEvent type, AddonArgs args)
+    {
+        if (!config.TriggerTradeRequest) return;
+
+        service.TryTrigger(PraiseCategory.TradeRequest, chanceOverride: 100);
     }
 
     /// <summary>

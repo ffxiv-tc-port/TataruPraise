@@ -78,13 +78,32 @@ public static class PraiseCategory
     public const string BeingWatched = "被盯著";
 
     /// <summary>
+    /// 通知：收到密語（內建觸發，看 <c>XivChatType.TellIncoming</c>）。
+    /// <b>鍵名由 IPC 呼叫端逐字使用。</b>
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 這個跟 <see cref="Tell"/>（「私訊」）是<b>兩個不同的鍵</b>，刻意的：
+    /// 「私訊」沒有內建觸發、留給 NotificationMaster 之類的外部呼叫端；
+    /// 「被密語」是這個外掛<b>自己</b>訂閱聊天事件觸發的。兩邊同時裝的話會聽到兩次，
+    /// 這是使用者可以自己在觸發分頁關掉一邊的事——把兩者合併反而會讓外部呼叫端無法單獨關閉。
+    /// </remarks>
+    public const string TellReceived = "被密語";
+
+    /// <summary>通知：收到組隊邀請（內建觸發，看邀請彈窗 addon 出現）。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
+    public const string PartyInvite = "組隊邀請";
+
+    /// <summary>通知：收到交易請求（內建觸發，看交易視窗 addon 出現）。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
+    public const string TradeRequest = "交易請求";
+
+    /// <summary>
     /// 內建情境，順序即 UI 上的顯示順序。
     /// </summary>
     /// <remarks>
     /// 🔴 內建情境<b>不可以在設定視窗刪掉</b>（刪了 <see cref="PraisePool.Load"/> 下次啟動又會補回來，
     /// 對使用者是「刪不掉」的鬼打牆）。自訂情境才有刪除鈕。
     /// <para>
-    /// 📌 前四個有遊戲事件觸發來源；後三個沒有，靠別的外掛用 IPC 叫。
+    /// 📌 有些情境有內建的遊戲事件觸發來源（見設定視窗的「觸發」分頁與 README 的情境表），
+    /// 其餘的沒有，靠別的外掛用 IPC 叫。
     /// </para>
     /// </remarks>
     public static readonly string[] All =
@@ -110,6 +129,9 @@ public static class PraiseCategory
         NeedHelp,
         PlayerAlert,
         BeingWatched,
+        TellReceived,
+        PartyInvite,
+        TradeRequest,
     ];
 
     /// <summary>內建情境的預設「情境描述」（餵給文字後端，比分類名多一點上下文）。</summary>
@@ -119,13 +141,13 @@ public static class PraiseCategory
     /// </remarks>
     public static readonly Dictionary<string, string> Situations = new()
     {
-        [DutyComplete] = "前輩剛剛順利通關了一個副本",
-        [LevelUp] = "前輩剛剛升等了",
-        [Login] = "前輩剛登入遊戲，久違地上線了",
-        [GilMilestone] = "前輩存的 Gil 剛跨過一個新的里程碑",
-        [Submarine] = "這是通知：前輩派出去的潛水艇整隊平安回港了（或僱員的探險全部收完了）。請用一句 8~15 字的短句，先說明這件事，再簡短稱讚一下；不要鋪陳前情、不要多講第二件事。",
-        [Crafting] = "這是通知：前輩把整份製作清單做完了。請用一句 8~15 字的短句，先說明這件事，再簡短稱讚一下；不要鋪陳前情、不要多講第二件事。",
-        [Cosmic] = "這是通知：前輩在宇宙探索的任務拿到了金評價。請用一句 8~15 字的短句，先說明這件事，再簡短稱讚一下；不要鋪陳前情、不要多講第二件事。",
+        [DutyComplete] = "這是提示音，不是對話：前輩剛剛順利通關了一個副本。只輸出一句極短提示（2~12 字），像脫口而出的一句話；不要鋪陳、不要說明、不要接第二個子句。",
+        [LevelUp] = "這是提示音，不是對話：前輩剛剛升等了。只輸出一句極短提示（2~12 字），像脫口而出的一句話；不要鋪陳、不要說明、不要接第二個子句。",
+        [Login] = "這是提示音，不是對話：前輩剛登入遊戲。只輸出一句極短提示（2~12 字），像脫口而出的一句話；不要鋪陳、不要說明、不要接第二個子句。",
+        [GilMilestone] = "這是提示音，不是對話：前輩存的 Gil 剛跨過一個新的里程碑。只輸出一句極短提示（2~12 字），像脫口而出的一句話；不要鋪陳、不要說明、不要接第二個子句。",
+        [Submarine] = "這是通知，不是誇獎：前輩派出去的潛水艇整隊平安回港了（或僱員的探險全部收完了）。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
+        [Crafting] = "這是通知，不是誇獎：前輩把整份製作清單做完了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
+        [Cosmic] = "這是通知，不是誇獎：前輩在宇宙探索的任務拿到了金評價。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [LowHp] = "這是戰鬥警示，不是誇獎：前輩的血量掉到危險線以下了，正在戰鬥中。只輸出一句 2~6 字的極短句，像喊出來的一樣；不要稱讚、不要說明、不要鋪陳。",
         [MarkedByMany] = "這是戰鬥警示，不是誇獎：好幾個敵對玩家同時鎖定了前輩。只輸出一句 2~6 字的極短句，像喊出來的一樣；不要稱讚、不要說明、不要鋪陳。",
         [EnemyBehind] = "這是戰鬥警示，不是誇獎：有敵對玩家從前輩的背後接近。只輸出一句 2~6 字的極短句，像喊出來的一樣；不要稱讚、不要說明、不要鋪陳。",
@@ -140,25 +162,37 @@ public static class PraiseCategory
         [NeedHelp] = "這是通知，不是誇獎：自動化卡住了，需要前輩過來看一下。只輸出 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
         [PlayerAlert] = "這是通知，不是誇獎：附近出現了要注意的玩家。只輸出 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
         [BeingWatched] = "這是通知，不是誇獎：有人把前輩設成了目標，正在盯著前輩看。只輸出 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
+        [TellReceived] = "這是通知，不是誇獎：有人傳密語給前輩了。只輸出一句 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
+        [PartyInvite] = "這是通知，不是誇獎：有人邀請前輩加入隊伍，畫面上跳出了邀請視窗。只輸出一句 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
+        [TradeRequest] = "這是通知，不是誇獎：有人要跟前輩交易，畫面上跳出了交易視窗。只輸出一句 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
     };
 
     /// <summary>
     /// 內建情境的「句長上限覆寫」。
     /// </summary>
     /// <remarks>
-    /// 🔴 三個 IPC 通知情境（潛艇／製作／宇宙）要的是<b>短通知句</b>（8~15 字），
-    /// 跟一般誇獎句（12~25 字）不是同一種東西。全域上限 28 對它們太鬆——
-    /// 生出來的長句照樣入池，實機上就會變成「通知念了五秒才講完」。
+    /// 🔴 <b>每一個內建情境都是「極短提示」</b>（≤12 字）——這是實機定調的形態：
+    /// 「不是要太多對話，只是要有聲音」。長句念起來像唸稿，而且在通知情境會變成
+    /// 「通知念了五秒才講完」。
     /// <para>
-    /// 📌 沒列在這裡的情境（原本那四個、還有使用者自訂的）回 0，代表<b>用全域上限</b>。
+    /// ⚠️ 這裡的值同時決定<b>提示詞跟模型要幾個字</b>（見 <see cref="PraiseText.LengthHint"/>）。
+    /// 改了這裡就要跟著改 <see cref="Situations"/> 裡那個情境的描述文字，
+    /// 兩邊對不起來的失敗形狀是<b>良率掉到接近 0，而且看起來像模型壞掉</b>。
+    /// </para>
+    /// <para>
+    /// 📌 沒列在這裡的情境（使用者自訂的）回 0，代表<b>用全域上限</b>（預設也是 12）。
     /// 使用者在設定視窗填的覆寫存在 <see cref="Configuration.CategoryMaxLength"/>，優先於這裡。
     /// </para>
     /// </remarks>
     public static readonly Dictionary<string, int> MaxLengths = new()
     {
-        [Submarine] = 16,
-        [Crafting] = 16,
-        [Cosmic] = 16,
+        [DutyComplete] = 12,
+        [LevelUp] = 12,
+        [Login] = 12,
+        [GilMilestone] = 12,
+        [Submarine] = 12,
+        [Crafting] = 12,
+        [Cosmic] = 12,
         [LowHp] = 8,
         [MarkedByMany] = 8,
         [EnemyBehind] = 8,
@@ -173,6 +207,9 @@ public static class PraiseCategory
         [NeedHelp] = 12,
         [PlayerAlert] = 12,
         [BeingWatched] = 12,
+        [TellReceived] = 12,
+        [PartyInvite] = 12,
+        [TradeRequest] = 12,
     };
 
     /// <summary>
@@ -180,11 +217,19 @@ public static class PraiseCategory
     /// </summary>
     /// <remarks>
     /// 🔴 全域下限 <see cref="PraiseText.MinLength"/>（6 字）是拿來擋「模型吐出來的殘句」的，
-    /// 對警示／提醒情境完全不適用——「後面！」只有 3 個字，正是我們要的東西。
-    /// 不放寬下限的話，這幾個情境生回來的句子會<b>全部被當成殘句丟掉</b>，而且看起來像模型壞掉。
+    /// 對<b>所有內建情境</b>都不適用——「後面！」只有 3 個字、「完美收工！」只有 5 個字，
+    /// 正是我們要的東西。不放寬下限的話，這些情境生回來的句子會<b>全部被當成殘句丟掉</b>，
+    /// 而且看起來像模型壞掉。
     /// </remarks>
     public static readonly Dictionary<string, int> MinLengths = new()
     {
+        [DutyComplete] = 2,
+        [LevelUp] = 2,
+        [Login] = 2,
+        [GilMilestone] = 2,
+        [Submarine] = 2,
+        [Crafting] = 2,
+        [Cosmic] = 2,
         [LowHp] = 2,
         [MarkedByMany] = 2,
         [EnemyBehind] = 2,
@@ -199,6 +244,9 @@ public static class PraiseCategory
         [NeedHelp] = 2,
         [PlayerAlert] = 2,
         [BeingWatched] = 2,
+        [TellReceived] = 2,
+        [PartyInvite] = 2,
+        [TradeRequest] = 2,
     };
 
     /// <summary>
@@ -232,6 +280,9 @@ public static class PraiseCategory
         [NeedHelp] = 5,
         [PlayerAlert] = 5,
         [BeingWatched] = 5,
+        [TellReceived] = 5,
+        [PartyInvite] = 5,
+        [TradeRequest] = 5,
     };
 
     /// <summary>內建的句長下限覆寫；沒有就回 0（＝用全域下限）。</summary>

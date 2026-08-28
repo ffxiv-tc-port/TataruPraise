@@ -34,10 +34,10 @@ public sealed class Configuration : IPluginConfiguration
     public bool Enabled { get; set; } = false;
 
     /// <summary>全域冷卻秒數。冷卻中的觸發直接丟棄，不排隊。</summary>
-    public int CooldownSeconds { get; set; } = 120;
+    public int CooldownSeconds { get; set; } = 10;
 
     /// <summary>觸發機率（%）。過了冷卻還要再擲一次骰。</summary>
-    public int ChancePercent { get; set; } = 30;
+    public int ChancePercent { get; set; } = 100;
 
     /// <summary>播放音量（0～1）。</summary>
     public float Volume { get; set; } = 0.8f;
@@ -72,6 +72,27 @@ public sealed class Configuration : IPluginConfiguration
 
     /// <summary>要幾個敵對玩家同時從背後接近才觸發。</summary>
     public int EnemyBehindCount { get; set; } = 2;
+
+    // ── 內建通知（全部預設關；只讀狀態、純出聲，不做任何遊戲操作）─────────────
+    /// <summary>收到密語時出聲（看 <c>XivChatType.TellIncoming</c>，不比對任何文字）。</summary>
+    /// <remarks>
+    /// 🔴 判準<b>只有聊天類型</b>。台服的中文字面沒辦法離線確定，比對文字一定錯而且錯法是靜默的。
+    /// 📌 自己送出去的密語是 <c>TellOutgoing</c>（12），不是 <c>TellIncoming</c>（13），不會觸發。
+    /// </remarks>
+    public bool TriggerTellReceived { get; set; } = false;
+
+    /// <summary>副本配對排到時出聲（<c>IClientState.CfPop</c>）。</summary>
+    /// <remarks>
+    /// 📌 情境鍵是既有的「副本排到」，跟 NotificationMaster 走 IPC 叫的<b>是同一個鍵</b>。
+    /// 兩邊同時開的話，逐情境冷卻（5 秒）會把第二次吸掉——不會聽到兩聲。
+    /// </remarks>
+    public bool TriggerDutyPop { get; set; } = false;
+
+    /// <summary>收到組隊邀請時出聲（邀請彈窗 addon 出現）。</summary>
+    public bool TriggerPartyInvite { get; set; } = false;
+
+    /// <summary>收到交易請求時出聲（交易視窗 addon 出現）。</summary>
+    public bool TriggerTradeRequest { get; set; } = false;
 
     // ── 觸發前提補強 ───────────────────────────────────────────────
     /// <summary>登入誇獎只在「當天第一次」出聲。</summary>
@@ -134,7 +155,7 @@ public sealed class Configuration : IPluginConfiguration
     public string GeminiModel { get; set; } = "gemini-3.5-flash-lite";
 
     /// <summary>按一次「擴充誇獎池」時，每個情境要生幾句。</summary>
-    public int GenerateCountPerCategory { get; set; } = 10;
+    public int GenerateCountPerCategory { get; set; } = 5;
 
     /// <summary>
     /// 句長上限（字，不含空白；中文標點算在內）。生成回來超過這個長度的句子直接丟掉。
@@ -142,9 +163,10 @@ public sealed class Configuration : IPluginConfiguration
     /// <remarks>
     /// 🔴 這是<b>生成端</b>的閘門，只擋新句子；pool.json 裡既有的長句<b>不會</b>被它動到
     /// （那是使用者的資料）。要清掉舊的長句請按設定視窗裡的「移除超過上限的句子」。
-    /// 📌 預設 28＝提示詞要求的 25 字再加幾格標點的餘裕。
+    /// 📌 出廠預設 12（極短提示）。想要長句誇獎就把設定視窗「進階」裡的滑桿推高，
+    /// 提示詞跟模型要的字數會跟著自動變長。
     /// </remarks>
-    public int MaxPraiseLength { get; set; } = Core.PraiseText.DefaultMaxLength;
+    public int MaxPraiseLength { get; set; } = Core.PraiseText.ShortDefaultMaxLength;
 
     // ── 情境描述 ────────────────────────────────────────────────────
     /// <summary>
@@ -165,7 +187,7 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     /// <remarks>
     /// 📌 空／0／沒有這個鍵＝<b>用全域的 <see cref="MaxPraiseLength"/></b>；
-    /// 沒有自訂時，內建的通知情境還有一層 <see cref="Core.PraiseCategory.MaxLengths"/> 的預設（16）。
+    /// 沒有自訂時，內建情境還有一層 <see cref="Core.PraiseCategory.MaxLengths"/> 的預設（12／10／8）。
     /// 取用順序寫在 <see cref="MaxLengthOf"/>。
     /// <para>
     /// 🔴 覆寫的下界是 <see cref="Core.PraiseText.MinLength"/>（6），<b>不是</b> UI 全域滑桿的下界 12——
@@ -179,7 +201,8 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     /// <remarks>
     /// 🔴 全域下限 <see cref="Core.PraiseText.MinLength"/>（6 字）是拿來擋殘句的，對警示／提醒情境
-    /// 完全不適用——「後面！」只有 3 個字，正是要的東西。不放寬的話那些情境生回來的句子會全部被丟掉。
+    /// 完全不適用——「後面！」只有 3 個字、「完美收工！」只有 5 個字，正是要的東西。
+    /// 不放寬的話那些情境生回來的句子會全部被丟掉。
     /// </remarks>
     public Dictionary<string, int> CategoryMinLength { get; set; } = [];
 

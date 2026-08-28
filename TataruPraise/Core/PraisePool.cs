@@ -459,6 +459,117 @@ public sealed class PraisePool
         }
     }
 
+    /// <summary>某個情境的第一句（＝設定視窗「短句」欄位顯示的那一句）；沒有就回 <c>null</c>。</summary>
+    /// <remarks>
+    /// 📌 出廠狀態下每個情境只有一句，所以「第一句」就是「那一句」。
+    /// 使用者用「進階」生了多句之後這裡回的仍是第一句，但<b>挑句是隨機的</b>
+    /// （見 <see cref="PickCached"/>）——所以 UI 上要把「這個情境還有 N 句」寫在列上，
+    /// 不然使用者會以為編輯框裡那句就是唯一會播的東西。
+    /// </remarks>
+    public string? FirstTextOf(string category)
+    {
+        lock (gate)
+        {
+            if (!pool.TryGetValue(category, out var list) || list.Count == 0) return null;
+            return list[0].Text;
+        }
+    }
+
+    /// <summary>
+    /// 把某個情境換成「只有這一句」。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這會<b>刪掉這個情境原本的其他句子</b>——設定視窗那個「短句」欄位就是這個語意：
+    /// 一個情境一句提示。只能由使用者在欄位裡打完字按 Enter／移開焦點才會跑，
+    /// 絕不可以在載入時或任何自動路徑上呼叫。
+    /// <para>
+    /// 🔴 刪 WAV 之前一定要確認<b>整池</b>真的沒有那句話了：同一句可以同時掛在兩個情境底下
+    /// （出廠的「到旗標」與「抵達」就都是「到了！」），而快取檔名是句子的雜湊——
+    /// 只按「我剛換掉這一筆」就去刪檔，會把另一個情境還在用的語音一起刪掉，而且是靜默的，
+    /// 要到那個情境播不出聲才會發現。
+    /// </para>
+    /// <para>
+    /// 📌 新句子如果<b>原本就在這個情境裡</b>，它的 <c>wav</c> 欄位會留著，不必重新合成。
+    /// </para>
+    /// </remarks>
+    /// <param name="deletedWavs">實際刪掉幾個 WAV 檔。</param>
+    /// <param name="error">失敗原因；成功或「本來就一樣」是 <c>null</c>。</param>
+    /// <returns>有沒有真的改動。回 <c>false</c> 且 <paramref name="error"/> 是 <c>null</c> ＝內容一樣，什麼都沒動。</returns>
+    public bool SetSingleLine(string category, string text, out int deletedWavs, out string? error)
+    {
+        deletedWavs = 0;
+        error = null;
+
+        var trimmed = PraiseText.Normalize(text);
+        if (trimmed.Length == 0)
+        {
+            error = "短句不能是空的。";
+            return false;
+        }
+
+        var removedTexts = new HashSet<string>(StringComparer.Ordinal);
+        var remaining = new HashSet<string>(StringComparer.Ordinal);
+        var removedCount = 0;
+
+        lock (gate)
+        {
+            if (!pool.TryGetValue(category, out var list))
+            {
+                error = $"情境「{category}」不存在。";
+                return false;
+            }
+
+            // 內容一模一樣就不要白寫一次檔（每幀失焦都會呼叫到這裡）。
+            if (list.Count == 1 && string.Equals(list[0].Text, trimmed, StringComparison.Ordinal))
+                return false;
+
+            string? keptWav = null;
+            foreach (var line in list)
+            {
+                if (string.Equals(line.Text, trimmed, StringComparison.Ordinal))
+                {
+                    keptWav = line.Wav;
+                    continue;
+                }
+
+                removedTexts.Add(line.Text);
+                removedCount++;
+            }
+
+            list.Clear();
+            list.Add(new PraiseLine { Text = trimmed, Wav = keptWav ?? string.Empty });
+
+            foreach (var other in pool.Values)
+            {
+                foreach (var line in other) remaining.Add(line.Text);
+            }
+        }
+
+        Save();
+
+        foreach (var removed in removedTexts)
+        {
+            if (remaining.Contains(removed)) continue;
+
+            var path = CachePathFor(removed);
+            try
+            {
+                if (!File.Exists(path)) continue;
+                File.Delete(path);
+                deletedWavs++;
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Information($"[TataruPraise] 刪除語音快取失敗（{path}）：{ex.Message}");
+            }
+        }
+
+        Svc.Log.Information(
+            $"[TataruPraise] 情境「{category}」的短句改成「{trimmed}」"
+            + $"（移除舊句 {removedCount} 句、刪掉 {deletedWavs} 個語音快取）。");
+        return true;
+    }
+
     /// <summary>
     /// 把整池重置回 <see cref="DefaultPool"/> 的內建句子。
     /// </summary>
@@ -476,8 +587,8 @@ public sealed class PraisePool
     /// <b>不掃 <c>cache/</c> 目錄</b>。掃目錄刪檔會把使用者手動放進去的東西一起清掉，而且是靜默的。
     /// </para>
     /// <para>
-    /// ⚠️ 內建那 28 句的 WAV <b>也會一起被刪掉</b>（它們本來就在舊池裡）：重置之後寫回去的是
-    /// <b>沒有語音</b>的預設池，那 28 句要重新按一次「預合成」。這是刻意的——
+    /// ⚠️ 內建那些句子的 WAV <b>也會一起被刪掉</b>（它們本來就在舊池裡）：重置之後寫回去的是
+    /// <b>沒有語音</b>的預設池，要重新按一次「預合成」。這是刻意的——
     /// 讓「重置完的狀態」永遠是同一個，不會因為使用者以前合成過什麼而長得不一樣。
     /// </para>
     /// </remarks>

@@ -3,218 +3,59 @@ using System.Collections.Generic;
 namespace TataruPraise.Core;
 
 /// <summary>
-/// 內建的預設誇獎池。
+/// 內建的預設誇獎池：<b>每個情境一句極短提示</b>。
 /// </summary>
 /// <remarks>
-/// 存在的理由：沒有 Gemini 金鑰的人也要能直接按「預合成語音快取」就用起來。
+/// 🔴 <b>定位＝「不是要太多對話，只是要有聲音」</b>（使用者實機用過之後定調的）。
+/// 每個情境只有一句、全部在 8 個字以內，聽起來像音效而不是對白。
+/// 想要長句誇獎的人請自己在設定視窗的「進階」把句長上限調高，再用 Gemini 擴充池——
+/// <b>那是加上去的能力，不是預設</b>。
 /// <para>
-/// 🔴 每一句都<b>必須含自然的中文標點</b>（逗號、頓號、句號、驚嘆號）。GPT-SoVITS 橋接是靠標點斷句的，
-/// 沒有標點的長句會讓聲線越念越高變成怪腔——這是 d:\love 那邊的實測結論，不是風格偏好。
-/// </para>
-/// <para>
-/// 🔴 每一句都<b>控制在 12~25 字（不含空白，標點算在內）</b>，而且只有一句話、最多一個逗號。
-/// 實機回饋：長句念起來像在唸稿，短而口語的才像塔塔露在講話。加句子進來的時候請照這個尺寸，
-/// 量法用 <see cref="PraiseText.CountChars"/>（與生成端的硬過濾同一把尺）。
+/// 🔴 每一句都<b>必須含自然的中文標點</b>（句號、驚嘆號、問號）。GPT-SoVITS 橋接是靠標點斷句的，
+/// 沒有標點的句子會讓聲線越念越高變成怪腔——這是 d:\love 那邊的實測結論，不是風格偏好。
 /// </para>
 /// <para>
 /// 📌 用詞對齊台服：<b>Gil 不譯</b>（台服 <c>Addon</c>／<c>LogMessage</c> 裡一律寫「Gil」，沒有「金幣」）。
-/// 人設：破曉血盟的接待員兼財務總管塔塔露，開朗、勤快、有點小得意、很熱心，稱使用者「前輩」，
-/// 句尾偶爾「的說／唷／呢」但不是每句都加，內容一律健全。
+/// 長度量法用 <see cref="PraiseText.CountChars"/>（與生成端的硬過濾同一把尺）。
 /// </para>
 /// <para>
-/// 📌 這裡只在「池是空的」時候當種子灌進去（見 <see cref="PraisePool.SeedIfEmpty"/>），
+/// 📌 這裡只在「池是空的」時候當種子灌進去（見 <see cref="PraisePool.SeedIfEmpty"/>）、
+/// 或是<b>某個內建情境的鍵不存在</b>時補那一個鍵（見 <see cref="PraisePool.Load"/>），
 /// <b>不會覆蓋使用者已經有的池</b>，也不會把使用者刪掉的句子塞回來。
 /// 🔴 反過來說，改這裡的句子<b>對既有使用者沒有任何效果</b>——他們的 pool.json 早就存在了。
+/// 要換句子請用設定視窗情境表格上的「短句」欄位直接編輯，或按「重置為預設池」。
+/// </para>
+/// <para>
+/// ⚠️ 舊版的 102 句長誇獎句（12~25 字）已於本版整批移除。要找回來看 git 歷史。
 /// </para>
 /// </remarks>
 public static class DefaultPool
 {
     public static Dictionary<string, List<string>> Lines { get; } = new()
     {
-        [PraiseCategory.DutyComplete] =
-        [
-            "順利通關了呢，前輩果然最可靠！",
-            "這種難度也能一次過，太厲害了前輩！",
-            "辛苦了前輩，這場我看得好過癮呢！",
-            "這麼快就回來了，前輩真的很強唷。",
-            "完美收工！戰利品交給我整理吧。",
-            "前輩表現太好，我要多寫兩頁功績呢！",
-            "又是一場乾淨俐落的勝利，前輩！",
-            "我就說前輩一定沒問題的嘛！",
-        ],
-
-        [PraiseCategory.LevelUp] =
-        [
-            "升等了呢，恭喜前輩這一路的努力！",
-            "又變強了，前輩快沒人追得上囉！",
-            "等級又往上跳，前輩成長好快呢！",
-            "恭喜升等！這份實力我要幫你宣傳。",
-            "太棒了前輩，我的紀錄又要更新了。",
-            "踏實地變強，這點前輩最了不起唷。",
-            "升等啦！我這邊還有委託等著前輩喔。",
-        ],
-
-        [PraiseCategory.Login] =
-        [
-            "前輩歡迎回來，我一直在等你唷。",
-            "啊，前輩上線了！今天也一起加油。",
-            "歡迎回來，帳本我都整理好了呢。",
-            "前輩來了，這下子我就放心了的說。",
-            "早安呀前輩，今天看起來精神很好！",
-            "前輩一出現，事務所都亮起來了唷。",
-            "等你好久了，今天想先做什麼呢？",
-        ],
-
-        [PraiseCategory.GilMilestone] =
-        [
-            "前輩的存款又跨過一個大關卡了呢！",
-            "這麼多 Gil！前輩理財也很有一套嘛。",
-            "帳面數字漂亮，這筆錢我幫你看著唷。",
-            "又存到一個里程碑，前輩要買房了嗎？",
-            "前輩真會賺，我這總管都快沒事做了。",
-            "看到這個數字，我忍不住要多誇你兩句！",
-        ],
-
-        [PraiseCategory.Submarine] =
-        [
-            "前輩，潛艇全都回港了唷！",
-            "潛艇回來啦，收穫滿滿呢！",
-            "整隊平安歸來，太好了！",
-            "探險全收完了，前輩好棒！",
-            "前輩，海底的寶貝到手囉。",
-            "潛艇滿載回港，發財了呢！",
-        ],
-
-        [PraiseCategory.Crafting] =
-        [
-            "前輩，清單做完了呢！",
-            "清單全做完啦，手真巧！",
-            "成品都好了，前輩辛苦囉。",
-            "製作完成，這批做得真漂亮！",
-            "前輩，東西全做好了唷。",
-            "清單清空啦，前輩好厲害！",
-        ],
-
-        [PraiseCategory.Cosmic] =
-        [
-            "宇宙任務拿到金評了，前輩好棒！",
-            "前輩，這次是金評唷！",
-            "金評到手，太厲害了呢！",
-            "宇宙那邊也拿到金評啦！",
-            "任務金評，前輩果然可靠。",
-            "前輩，星星上也是金評呢！",
-        ],
-
-        [PraiseCategory.LowHp] =
-        [
-            "危險！",
-            "前輩，危險！",
-            "快補血！",
-            "小心血量！",
-        ],
-
-        [PraiseCategory.MarkedByMany] =
-        [
-            "小心！",
-            "被盯上了！",
-            "好多人看你！",
-            "前輩小心！",
-        ],
-
-        [PraiseCategory.EnemyBehind] =
-        [
-            "後面！",
-            "背後有人！",
-            "前輩，後面！",
-            "回頭！",
-        ],
-
-        [PraiseCategory.DutyStart] =
-        [
-            "任務開始！",
-            "前輩，開始了！",
-            "要上了唷！",
-            "出發！",
-        ],
-
-        [PraiseCategory.ReadyCheck] =
-        [
-            "準備確認！",
-            "前輩，按確認！",
-            "要確認囉！",
-            "準備好了嗎？",
-        ],
-
-        [PraiseCategory.CutsceneEnd] =
-        [
-            "注意！",
-            "前輩，開打了！",
-            "過場結束！",
-            "大家好了！",
-        ],
-
-        [PraiseCategory.DutyPop] =
-        [
-            "排到了！",
-            "前輩，排到了！",
-            "副本來了！",
-            "快按確認！",
-        ],
-
-        [PraiseCategory.FlagArrived] =
-        [
-            "到了！",
-            "前輩，到旗標了！",
-            "就是這裡！",
-            "目的地到了！",
-        ],
-
-        [PraiseCategory.Tell] =
-        [
-            "有人找你！",
-            "前輩，有私訊！",
-            "有人在叫你！",
-            "看一下聊天！",
-        ],
-
-        [PraiseCategory.Arrived] =
-        [
-            "到了！",
-            "前輩，抵達了！",
-            "到目的地了！",
-            "下車囉！",
-        ],
-
-        [PraiseCategory.Jackpot] =
-        [
-            "中了！",
-            "前輩中獎了！",
-            "恭喜中獎！",
-            "賺到了！",
-        ],
-
-        [PraiseCategory.NeedHelp] =
-        [
-            "前輩，卡住了！",
-            "需要幫忙！",
-            "這裡過不去！",
-            "請來看一下！",
-        ],
-
-        [PraiseCategory.PlayerAlert] =
-        [
-            "注意注意！",
-            "前輩，注意！",
-            "有人來了！",
-            "小心周圍！",
-        ],
-
-        [PraiseCategory.BeingWatched] =
-        [
-            "有人盯著你！",
-            "前輩，有人在看你！",
-            "被人看著唷！",
-            "有人選你了！",
-        ],
+        [PraiseCategory.DutyComplete] = ["完美收工！"],
+        [PraiseCategory.LevelUp] = ["恭喜升等！"],
+        [PraiseCategory.Login] = ["歡迎回來。"],
+        [PraiseCategory.GilMilestone] = ["這麼多 Gil！"],
+        [PraiseCategory.Submarine] = ["潛艇回來啦！"],
+        [PraiseCategory.Crafting] = ["製作完成！"],
+        [PraiseCategory.Cosmic] = ["任務金評。"],
+        [PraiseCategory.LowHp] = ["危險！"],
+        [PraiseCategory.MarkedByMany] = ["小心！"],
+        [PraiseCategory.EnemyBehind] = ["後面！"],
+        [PraiseCategory.DutyStart] = ["出發！"],
+        [PraiseCategory.ReadyCheck] = ["準備確認！"],
+        [PraiseCategory.CutsceneEnd] = ["注意！"],
+        [PraiseCategory.DutyPop] = ["排到了！"],
+        [PraiseCategory.FlagArrived] = ["到了！"],
+        [PraiseCategory.Tell] = ["有人找你！"],
+        [PraiseCategory.Arrived] = ["到了！"],
+        [PraiseCategory.Jackpot] = ["恭喜中獎！"],
+        [PraiseCategory.NeedHelp] = ["需要幫忙！"],
+        [PraiseCategory.PlayerAlert] = ["注意注意！"],
+        [PraiseCategory.BeingWatched] = ["有人盯著你！"],
+        [PraiseCategory.TellReceived] = ["有人密你！"],
+        [PraiseCategory.PartyInvite] = ["組隊邀請！"],
+        [PraiseCategory.TradeRequest] = ["交易請求！"],
     };
 }

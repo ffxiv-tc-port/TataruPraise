@@ -8,14 +8,32 @@ namespace TataruPraise.Core;
 /// 三個地方都要用同一個 <see cref="CountChars"/>：模型生出來的句子怎麼濾、UI 說「有幾句超過上限」、
 /// 「移除超過上限的句子」實際刪哪幾句——用兩把不同的尺會讓「顯示 3 句超長、按下去卻刪了 5 句」。
 /// <para>
-/// 📌 提示詞裡對模型說的是「12~25 個中文字」，而預設上限 <see cref="DefaultMaxLength"/> 是 28：
+/// 📌 出廠上限是 <see cref="ShortDefaultMaxLength"/>（12），提示詞會跟模型要 2~10 字；
+/// 把滑桿推到 <see cref="DefaultMaxLength"/>（28）就變回「12~25 字的長句誇獎」。
 /// 差的那幾格留給標點。上限是<b>硬牆</b>（超過就丟），不是目標值。
 /// </para>
 /// </remarks>
 public static class PraiseText
 {
-    /// <summary>句長上限的預設值（字，不含空白）。</summary>
+    /// <summary>句長上限的預設值（字，不含空白）。<b>長句誇獎</b>用的舊預設。</summary>
+    /// <remarks>
+    /// ⚠️ 這<b>不再是</b>設定的出廠值——出廠值是 <see cref="ShortDefaultMaxLength"/>（12）。
+    /// 這個常數留著當「想要長句誇獎時，滑桿該推到哪裡」的參考值，
+    /// 也是提示詞算式那五個錨點裡最長的那一個。
+    /// </remarks>
     public const int DefaultMaxLength = 28;
+
+    /// <summary>句長上限的<b>出廠預設值</b>（字，不含空白）。</summary>
+    /// <remarks>
+    /// 🔴 定調＝「不是要太多對話，只是要有聲音」：每個情境一句極短提示。
+    /// 12 剛好等於 <see cref="SliderMin"/>，也等於 <see cref="UltraShortThreshold"/>——
+    /// 所以出廠狀態下 <see cref="LengthHint"/> 一律走「極短句」那條分支。
+    /// <para>
+    /// 🔴 改這個值<b>對既有使用者無效</b>：Dalamud 只在設定檔缺鍵時才吃初始值。
+    /// 這是刻意的，<b>不做遷移</b>——那會回退使用者自己調過的設定。
+    /// </para>
+    /// </remarks>
+    public const int ShortDefaultMaxLength = 12;
 
     /// <summary>句長下限（字，不含空白）。比這還短的多半是模型吐出來的殘句。</summary>
     public const int MinLength = 6;

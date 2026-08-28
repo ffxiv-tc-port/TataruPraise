@@ -37,7 +37,7 @@ SOURCES = {
     "DutyStart": ("通知", "NotificationMaster：任務／戰鬥開始"),
     "ReadyCheck": ("通知", "NotificationMaster：準備確認"),
     "CutsceneEnd": ("通知", "NotificationMaster：過場結束"),
-    "DutyPop": ("通知", "外部呼叫：副本配對排到"),
+    "DutyPop": ("通知", "內建：`IClientState.CfPop`（外部呼叫端也用同一個鍵）"),
     "FlagArrived": ("通知", "外部呼叫：走到旗標"),
     "Tell": ("通知", "外部呼叫：收到私訊"),
     "Arrived": ("通知", "外部呼叫：抵達目的地"),
@@ -45,6 +45,9 @@ SOURCES = {
     "NeedHelp": ("通知", "外部呼叫：自動化卡住需要人來看"),
     "PlayerAlert": ("通知", "外部呼叫：附近出現要注意的玩家"),
     "BeingWatched": ("通知", "PeepingTom：有人把我設成目標"),
+    "TellReceived": ("通知", "內建：`IChatGui.ChatMessage` 的 `TellIncoming` 類型"),
+    "PartyInvite": ("通知", "內建：組隊邀請彈窗 addon 出現（`IAddonLifecycle`）"),
+    "TradeRequest": ("通知", "內建：交易視窗 addon 出現（`IAddonLifecycle`）"),
 }
 
 
@@ -101,7 +104,7 @@ def build_table():
         lo = min_lengths.get(const)
         hi = max_lengths.get(const)
         lo_text = str(lo) if lo else "全域(6)"
-        hi_text = str(hi) if hi else "全域(28)"
+        hi_text = str(hi) if hi else "全域(12)"
         lines.append(f"| `{key}` | {kind} | {cd_text} | {lo_text}～{hi_text} 字 | {source} |")
 
     lines += [

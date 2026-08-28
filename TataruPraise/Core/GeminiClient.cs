@@ -112,11 +112,39 @@ public static class GeminiClient
     /// <b>有效句長上限</b>算出來的（情境可以各自覆寫上限）。提示詞說的範圍與硬過濾的上限對不起來時，
     /// 良率會掉到接近 0，而且看起來像模型壞掉——那是這一版最容易踩的靜默失敗。
     /// </para>
+    /// <para>
+    /// 📌 措辭有<b>兩套</b>：極短提示（出廠狀態、hintMax &lt;= 10）要求「不要逗號、只有一個結尾標點」；
+    /// 句長上限被推高之後才換回原本那套「最多一個逗號」的長句措辭。
+    /// </para>
     /// </remarks>
-    public static string LengthPromptFor(int minChars, int maxChars) =>
-        "額外的長度約束(優先於上面的一到兩句)："
-        + $"每句只能是一句話，{minChars}~{maxChars} 個中文字，最多一個逗號；"
-        + "要像順口講出來的一句話，不要堆疊多個理由、不要複述情境、不要接兩三個子句、不要鋪陳前情。";
+    public static string LengthPromptFor(int minChars, int maxChars)
+    {
+        // 🔴 出廠狀態下每個情境的有效上限都是 12，算出來的 hintMax 是 10——走這條。
+        //    「最多一個逗號」對 10 字以內的提示還是太鬆：模型會生出「太好了，辛苦囉！」這種
+        //    兩段式的句子，念起來就不像音效了。分界跟 LengthHint 的極短分支同一條線
+        //    （上限 <= UltraShortThreshold 時 hintMax = 上限 - 2，所以 <= 10 等價於走了極短分支）。
+        if (maxChars <= UltraShortPromptMax)
+        {
+            return "額外的長度約束(優先於上面的一到兩句)："
+                + $"每句只能是一句極短的提示，{minChars}~{maxChars} 個中文字，"
+                + "不要逗號、整句只有一個結尾標點；"
+                + "要像脫口而出喊的一句話，不要說明、不要複述情境、不要接第二個子句、不要鋪陳前情。";
+        }
+
+        return "額外的長度約束(優先於上面的一到兩句)："
+            + $"每句只能是一句話，{minChars}~{maxChars} 個中文字，最多一個逗號；"
+            + "要像順口講出來的一句話，不要堆疊多個理由、不要複述情境、不要接兩三個子句、不要鋪陳前情。";
+    }
+
+    /// <summary>提示詞走「極短提示」措辭的 hintMax 分界（含）。</summary>
+    /// <remarks>
+    /// 🔴 這個數字必須跟 <see cref="PraiseText.LengthHint"/> 的極短分支對得起來：
+    /// 那條分支在有效上限 &lt;= <see cref="PraiseText.UltraShortThreshold"/>（12）時回
+    /// <c>上限 - 2</c>，所以 hintMax &lt;= 10 就等價於「這個情境是極短句」。
+    /// 改 <see cref="PraiseText.UltraShortThreshold"/> 的話這裡要一起改，
+    /// 對不起來的失敗形狀是<b>措辭與字數要求打架，良率掉下來而且看起來像模型壞掉</b>。
+    /// </remarks>
+    private const int UltraShortPromptMax = PraiseText.UltraShortThreshold - 2;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
 

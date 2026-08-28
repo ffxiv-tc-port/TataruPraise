@@ -26,6 +26,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly ConfigWindow configWindow;
     private readonly TriggerWatcher triggers;
+    private readonly DtrDisplay dtr;
     private readonly IpcProvider ipc;
 
     public Plugin(IDalamudPluginInterface pluginInterface)
@@ -42,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
         Service = new PraiseService(Config, Pool);
         Jobs = new PoolJobs(Config, Pool);
         triggers = new TriggerWatcher(Config, Service);
+        dtr = new DtrDisplay(Config, Pool, Service);
         ipc = new IpcProvider(Service);
 
         configWindow = new ConfigWindow(this);
@@ -74,6 +76,13 @@ public sealed class Plugin : IDalamudPlugin
         if (Config.TriggerLevelUp) triggerNames.Add(PraiseCategory.LevelUp);
         if (Config.TriggerLogin) triggerNames.Add(PraiseCategory.Login);
         if (Config.TriggerGilMilestone) triggerNames.Add(PraiseCategory.GilMilestone);
+        if (Config.TriggerLowHp) triggerNames.Add(PraiseCategory.LowHp);
+        if (Config.TriggerMarkedByMany) triggerNames.Add(PraiseCategory.MarkedByMany);
+        if (Config.TriggerEnemyBehind) triggerNames.Add(PraiseCategory.EnemyBehind);
+        if (Config.TriggerTellReceived) triggerNames.Add(PraiseCategory.TellReceived);
+        if (Config.TriggerDutyPop) triggerNames.Add(PraiseCategory.DutyPop);
+        if (Config.TriggerPartyInvite) triggerNames.Add(PraiseCategory.PartyInvite);
+        if (Config.TriggerTradeRequest) triggerNames.Add(PraiseCategory.TradeRequest);
 
         var total = 0;
         var cached = 0;
@@ -90,11 +99,18 @@ public sealed class Plugin : IDalamudPlugin
             + $"，誇獎池 {total} 句、其中 {cached} 句已有語音"
             + $"，橋接 {Config.TtsHost}，聲線 {Config.VoiceId}");
 
+        // 🔴 addon 名對不上的失敗形狀是「不響、不崩、也沒有錯誤訊息」。
+        //    把實際註冊的名字印出來，使用者回報「組隊邀請沒響」時才有東西可對。
+        Svc.Log.Information(
+            "[TataruPraise] 啟動：監聽的 addon＝"
+            + $"組隊邀請「{TriggerWatcher.PartyInviteAddon}」、交易請求「{TriggerWatcher.TradeAddon}」"
+            + "（名字對不上就是靜默不響，不會有錯誤訊息）。");
+
         if (total > 0 && cached == 0)
         {
             Svc.Log.Information(
                 "[TataruPraise] 啟動：誇獎池裡一句語音都還沒合成，現在觸發也不會出聲。"
-                + "請到設定視窗的「誇獎池」分頁按「預合成語音快取」。");
+                + "請到設定視窗的「短句」分頁按「預合成全部」。");
         }
     }
 
@@ -106,6 +122,14 @@ public sealed class Plugin : IDalamudPlugin
         var ok = Service.PlayTest(out var message);
         LastTestMessage = ok ? $"試播：{message}" : message;
         Svc.Log.Information($"[TataruPraise] 試播：{(ok ? "成功" : "沒有播出")}　{message}");
+    }
+
+    /// <summary>試播<b>指定情境</b>的一句（設定視窗情境表格上那顆「試播」）。</summary>
+    public void RunCategoryTest(string category)
+    {
+        var ok = Service.PlayCategoryTest(category, out var message);
+        LastTestMessage = ok ? $"試播「{category}」：{message}" : message;
+        Svc.Log.Information($"[TataruPraise] 試播「{category}」：{(ok ? "成功" : "沒有播出")}　{message}");
     }
 
     private void OnCommand(string command, string args)
@@ -132,6 +156,7 @@ public sealed class Plugin : IDalamudPlugin
         // 🔴 順序：先把「還會再產生工作的東西」拆掉（觸發線、IPC、背景批次），最後才拆播放器。
         //    反過來的話，卸載當下正在跑的 Framework.Update 還可能碰到已經 Dispose 的音訊物件。
         triggers.Dispose();
+        dtr.Dispose();
         ipc.Dispose();
         Jobs.Dispose();
         Service.Dispose();

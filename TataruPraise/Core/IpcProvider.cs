@@ -101,7 +101,7 @@ public sealed class IpcProvider : IDisposable
 
         Svc.Log.Information(
             $"[TataruPraise] IPC Praise 收到未知情境「{name}」，這次不出聲。"
-            + "請在設定視窗的「誇獎池」分頁按「新增情境」建立同名情境並生句、合成語音。"
+            + "請在設定視窗「短句」分頁的「進階」按「新增情境」建立同名情境，再打一句短句並合成語音。"
             + "（同一個情境只提醒這一次。）");
     }
 

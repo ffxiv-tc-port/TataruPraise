@@ -55,6 +55,17 @@ public sealed class ConfigWindow : Window
     public override void Draw()
     {
         DrawMasterSwitch();
+
+        // 🔴 這一行是「為什麼句子這麼短」的唯一解釋，放在最上面、不藏 tooltip。
+        //    使用者找不到長句誇獎在哪裡的時候，會以為外掛壞了而不是以為自己沒展開。
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextDisabled(
+            "預設是每個情境一句極短音效提示；"
+            + "要長句誇獎請到「短句」分頁的「進階」調高句長上限並用擴充池。");
+        ImGui.PopTextWrapPos();
+
+        DrawStatusLine();
+
         ImGui.Separator();
 
         if (ImGui.BeginTabBar("##TataruPraiseTabs"))
@@ -71,13 +82,85 @@ public sealed class ConfigWindow : Window
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("誇獎池###tab-pool"))
+            if (ImGui.BeginTabItem("短句###tab-pool"))
             {
                 DrawPoolTab();
                 ImGui.EndTabItem();
             }
 
             ImGui.EndTabBar();
+        }
+    }
+
+
+    /// <summary>
+    /// 視窗頂部的狀態列：語音快取進度 ＋ 上一次跟 9882 講話的結果。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>「還沒試過」與「試過但失敗」要分得開</b>，而且兩者都畫在列上。
+    /// 把「沒試過」畫成正常的樣子會讓使用者以為橋接是通的——真相是我們根本沒連過。
+    /// <para>
+    /// 🔴 這一列<b>不會自己去連 9882</b>。它顯示的是「上一次真的送出去的合成」留下的結果，
+    /// 由 <see cref="TtsBridge.LastSynthesisOk"/> 記著。要真的連線只有兩條路：
+    /// 使用者按「合成」／「預合成全部」，或按「語音」分頁的「測試連線」。
+    /// </para>
+    /// </remarks>
+    private void DrawStatusLine()
+    {
+        RefreshStatsIfStale();
+
+        // ── 語音快取進度 ──
+        if (poolTotalLines == 0)
+        {
+            ImGui.TextColored(ColorUnknown, "語音快取：池裡一句都沒有");
+        }
+        else if (poolCachedLines == 0)
+        {
+            ImGui.TextColored(ColorBad, $"語音快取 0/{poolTotalLines} 已合成（現在觸發不會出聲）");
+        }
+        else if (poolCachedLines < poolTotalLines)
+        {
+            ImGui.TextColored(ColorUnknown, $"語音快取 {poolCachedLines}/{poolTotalLines} 已合成");
+        }
+        else
+        {
+            ImGui.TextColored(ColorOk, $"語音快取 {poolCachedLines}/{poolTotalLines} 已合成");
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "整池「有 WAV 檔的句數／總句數」。" + "\n"
+                + "沒有 WAV 的句子永遠不會被挑到——挑句時就先把它們濾掉了，" + "\n"
+                + "所以「有句子」跟「會出聲」是兩件事。");
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled("｜");
+        ImGui.SameLine();
+
+        // ── 9882 的上次合成結果 ──
+        var ok = TtsBridge.LastSynthesisOk;
+        if (ok == null)
+        {
+            ImGui.TextColored(ColorUnknown, "9882：這次啟動後還沒合成過");
+        }
+        else
+        {
+            var stamp = TtsBridge.LastSynthesisAtLocal.ToString("HH:mm:ss");
+            if (ok == true)
+                ImGui.TextColored(ColorOk, $"9882：上次合成成功（{stamp}）");
+            else
+                ImGui.TextColored(ColorBad, $"9882：上次合成失敗（{stamp}）");
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "只有你按「合成」／「預合成全部」的時候才會連 9882。" + "\n"
+                + "🔴 遊戲中的觸發完全不連網：那條路只播已經存在的 WAV 檔。" + "\n"
+                + "（例外是別的外掛用 IPC Speak 念一句池裡沒有的話，那會即時合成一次。）" + "\n"
+                + "失敗原因寫在記錄檔：404＝聲線沒設定、502＝橋接背後的 api_v2 連不上。");
         }
     }
 
@@ -266,6 +349,56 @@ public sealed class ConfigWindow : Window
 
         ImGui.Unindent();
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.TextDisabled("內建通知（只讀狀態、純出聲，不會替你按任何按鈕）");
+        ImGui.Spacing();
+
+        var tell = Config.TriggerTellReceived;
+        if (ImGui.Checkbox("被密語", ref tell)) { Config.TriggerTellReceived = tell; Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "有人傳密語給你的時候出聲。判準只有聊天類型（TellIncoming），不比對任何文字。" + "\n"
+                + "自己送出去的密語（TellOutgoing）不算，所以不會自己喊自己。" + "\n"
+                + "📌 情境鍵是「被密語」，跟外部外掛叫的「私訊」是兩個鍵——兩邊都開就會聽到兩次。");
+        }
+
+        var cfPop = Config.TriggerDutyPop;
+        if (ImGui.Checkbox("副本排到（內建）", ref cfPop)) { Config.TriggerDutyPop = cfPop; Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "副本配對排到的時候出聲（來源是 IClientState.CfPop，不是聊天訊息比對）。" + "\n"
+                + "📌 情境鍵是「副本排到」，跟 NotificationMaster 用 IPC 叫的是同一個鍵。" + "\n"
+                + "兩邊同時開也只會聽到一聲：這個情境的冷卻是 5 秒，緊接著的第二次會被吸掉。");
+        }
+
+        var partyInvite = Config.TriggerPartyInvite;
+        if (ImGui.Checkbox("組隊邀請", ref partyInvite)) { Config.TriggerPartyInvite = partyInvite; Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "有人邀你入隊、邀請視窗跳出來的時候出聲。" + "\n"
+                + "🔴 只是聽那個視窗有沒有出現，不會替你按同意或拒絕。" + "\n"
+                + "⚠️ 沒響的話多半是視窗名字對不上（失敗形狀就是不響、不會有錯誤訊息）。");
+        }
+
+        var trade = Config.TriggerTradeRequest;
+        if (ImGui.Checkbox("交易請求", ref trade)) { Config.TriggerTradeRequest = trade; Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "有人跟你要求交易、交易視窗跳出來的時候出聲。" + "\n"
+                + "🔴 只是聽那個視窗有沒有出現，不會替你按任何按鈕。" + "\n"
+                + "⚠️ 沒響的話多半是視窗名字對不上（失敗形狀就是不響、不會有錯誤訊息）。");
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("這四條與警示一樣不擲機率骰（等同 100%），但照走各自的冷卻（5 秒）。");
+
+        ImGui.Spacing();
         ImGui.TextDisabled("其餘情境（潛艇、製作、宇宙、任務開始…）沒有內建觸發，由別的外掛用 IPC 呼叫。");
 
 
@@ -411,22 +544,54 @@ public sealed class ConfigWindow : Window
                 : "聲線清單：尚未查詢，只能手動填");
     }
 
+    /// <summary>
+    /// 「短句」分頁。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>主畫面只有「一個情境一句短句」這件事</b>：改字、看有沒有語音、合成、試播。
+    /// 多句、句長上限、Gemini 擴充全部收進<b>預設收合</b>的「進階」——那些是加上去的能力，不是主流程。
+    /// 主流程＝<b>裝好 → 按「預合成全部」做語音 → 到「觸發」分頁開想要的事件</b>。
+    /// </remarks>
     private void DrawPoolTab()
     {
         ImGui.Spacing();
-        DrawPoolStats();
+        RefreshStatsIfStale();
+
+        DrawShortLineTable();
+
+        ImGui.Spacing();
+        DrawPrecacheRow();
+
+        ImGui.Spacing();
+        DrawResetPool();
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 
-        DrawGeminiSettings();
+        if (ImGui.CollapsingHeader("進階：多句、句長上限、用 Gemini 擴充（可選）##advanced"))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("這底下的東西都不是必要的，不碰它也能用。");
+            ImGui.Spacing();
+
+            DrawPoolStats();
+
+            ImGui.Spacing();
+            DrawExpandRow();
+
+            DrawLengthLimit();
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            DrawGeminiSettings();
+        }
 
         ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        DrawJobButtons();
+        ImGui.TextDisabled("池與語音快取的位置");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"{plugin.Pool.PoolPath}\n{plugin.Pool.CacheDirectory}");
     }
 
     /// <summary>
@@ -451,6 +616,12 @@ public sealed class ConfigWindow : Window
 
     /// <summary>池裡超過目前句長上限的句數（跟著上面的統計一起、每秒重算一次）。</summary>
     private int overLimitCount;
+
+    /// <summary>整池的句數與已有語音的句數（頂部狀態列用；跟著統計一起每秒重算）。</summary>
+    private int poolTotalLines;
+
+    /// <summary>整池已經有 WAV 的句數。</summary>
+    private int poolCachedLines;
 
     /// <summary>「新增情境」輸入框的內容。</summary>
     private string newCategoryName = string.Empty;
@@ -491,6 +662,25 @@ public sealed class ConfigWindow : Window
     /// <summary>上一幀有沒有工作在跑（用來在工作剛結束時立刻重算統計）。</summary>
     private bool jobWasRunning;
 
+    /// <summary>
+    /// 「短句」欄位的編輯草稿（情境 → 正在打的字）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 只有<b>按 Enter 或移開焦點</b>才會寫進 pool.json（見 <see cref="CommitShortLine"/>）。
+    /// 邊打邊存的話，打到一半的「危」會先變成這個情境唯一的句子，把舊句與它的 WAV 一起刪掉——
+    /// 而那是不可回復的。
+    /// <para>
+    /// 📌 沒有草稿的情境顯示池裡的第一句；寫進去之後草稿就移除，讓顯示回到「池裡真的是什麼」。
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<string, string> shortDrafts = [];
+
+    /// <summary>短句編輯的結果訊息（畫在表格下面的列上，不藏 tooltip）。</summary>
+    private string shortLineNotice = string.Empty;
+
+    /// <summary>上面那則訊息是不是錯誤（決定顏色）。</summary>
+    private bool shortLineNoticeIsError;
+
     /// <summary>「每次生成句數」輸入框的下界。</summary>
     private const int GenerateCountMin = 1;
 
@@ -520,8 +710,16 @@ public sealed class ConfigWindow : Window
         // 🔴 重算前先清掉：自訂情境鍵會因為重置／手改 pool.json 而消失，
         // 只覆寫不清除的話，畫面上會留著一列已經不存在的情境。
         statsCache.Clear();
+        poolTotalLines = 0;
+        poolCachedLines = 0;
         foreach (var category in categoryList)
-            statsCache[category] = (plugin.Pool.CountOf(category), plugin.Pool.CachedCountOf(category));
+        {
+            var total = plugin.Pool.CountOf(category);
+            var cached = plugin.Pool.CachedCountOf(category);
+            statsCache[category] = (total, cached);
+            poolTotalLines += total;
+            poolCachedLines += cached;
+        }
 
         // 🔴 逐情境問上限：通知情境有自己的（較短的）上限，
         //    拿全域上限量整池會讓「有 N 句超長」跟按下去實際刪的數量對不上。
@@ -532,6 +730,211 @@ public sealed class ConfigWindow : Window
     private int ClampedMaxLength()
         => Math.Clamp(Config.MaxPraiseLength, PraiseText.SliderMin, PraiseText.SliderMax);
 
+    /// <summary>
+    /// 主畫面的短句表格：情境 ｜ 短句（直接編輯）｜ 語音 ｜ 合成 ｜ 試播。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 「這個情境有沒有語音」<b>一定要在列上看得見</b>：沒有 WAV 的情境是靜默不出聲的，
+    /// 藏進 tooltip 的話使用者只會看到「開了但沒聲音」，而且完全沒有線索。
+    /// <para>
+    /// 🔴 情境有多句時<b>不可以只顯示第一句就當沒事</b>——挑句是隨機的，
+    /// 只畫第一句會讓使用者以為那就是唯一會播的東西。所以語音欄改印「N/M 句」。
+    /// </para>
+    /// <para>
+    /// 📌 每一列的按鈕在<b>任何</b>工作跑的時候都 disabled：池是整份重寫的，
+    /// 兩個工作同時寫等於後寫的把先寫的整個蓋掉。
+    /// </para>
+    /// </remarks>
+    private void DrawShortLineTable()
+    {
+        var running = plugin.Jobs.IsRunning;
+        var runningCategory = plugin.Jobs.RunningCategory;
+
+        ImGui.TextDisabled("每個情境一句短句。改完按 Enter 或點到別的地方就會寫進 pool.json。");
+
+        if (!ImGui.BeginTable("##shortLines", 5, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+            return;
+
+        ImGui.TableSetupColumn("情境");
+        ImGui.TableSetupColumn("短句");
+        ImGui.TableSetupColumn("語音");
+        ImGui.TableSetupColumn("合成");
+        ImGui.TableSetupColumn("試播");
+        ImGui.TableHeadersRow();
+
+        for (var i = 0; i < categoryList.Count; i++)
+        {
+            var category = categoryList[i];
+            var builtIn = PraiseCategory.IsBuiltIn(category);
+            var (total, cached) = statsCache.TryGetValue(category, out var s) ? s : (0, 0);
+
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(builtIn ? category : category + " *");
+            if (running && runningCategory == category)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(ColorUnknown, "（進行中）");
+            }
+
+            // ── 短句：直接編輯。Enter 與移開焦點都會走 IsItemDeactivatedAfterEdit。──
+            ImGui.TableNextColumn();
+            var draft = shortDrafts.TryGetValue(category, out var pending)
+                ? pending
+                : plugin.Pool.FirstTextOf(category) ?? string.Empty;
+
+            ImGui.SetNextItemWidth(200f);
+            if (ImGui.InputText($"##short-{i}", ref draft, 128))
+                shortDrafts[category] = draft;
+
+            if (ImGui.IsItemDeactivatedAfterEdit())
+                CommitShortLine(category, draft);
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    "這個情境要念的那一句。改完按 Enter 或點到別的地方就會寫進 pool.json。\n"
+                    + "🔴 送出之後這個情境就只剩你打的這一句，舊句與它的語音會被刪掉（不可回復）。\n"
+                    + "改了字就要重新按「合成」——舊語音對不上新句子。");
+            }
+
+            // ── 語音：有／無要在列上看得見（沒有 WAV ＝ 靜默不出聲）──
+            ImGui.TableNextColumn();
+            if (total == 0)
+            {
+                ImGui.TextColored(ColorUnknown, "—");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("這個情境一句都沒有，先在左邊打一句短句。");
+            }
+            else if (total == 1)
+            {
+                ImGui.TextColored(cached > 0 ? ColorOk : ColorBad, cached > 0 ? "有" : "無");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        cached > 0
+                            ? "這句已經有合成好的 WAV，事件發生時就會出聲。"
+                            : "這句還沒有語音，按右邊的「合成」。沒有語音的情境不會出聲，而且是靜默的。");
+                }
+            }
+            else
+            {
+                var color = cached == 0 ? ColorBad : cached < total ? ColorUnknown : ColorOk;
+                ImGui.TextColored(color, $"{cached}/{total} 句");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        $"這個情境有 {total} 句（其中 {cached} 句有語音），播的時候是隨機挑一句。\n"
+                        + "左邊顯示的是第一句。在那裡改字並送出，會把這個情境收成「只有你打的那一句」，\n"
+                        + "其他句子與它們的語音一起刪掉（不可回復）。");
+                }
+            }
+
+            // ── 合成：這個情境還缺語音的句子（出廠狀態下就是那一句）──
+            ImGui.TableNextColumn();
+            ImGui.BeginDisabled(running || total == 0);
+            if (ImGui.Button($"合成##shortSyn-{i}"))
+                plugin.Jobs.StartSynthesizeCategory(category);
+            ImGui.EndDisabled();
+
+            // 🔴 這顆按鈕在 disabled 狀態下最需要 tooltip（使用者要問的正是「為什麼是灰的」），
+            //    而 ImGui 預設不把 hover 算在 disabled 的項目上——一定要帶 AllowWhenDisabled。
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                var missing = total - cached;
+                ImGui.SetTooltip(
+                    total == 0
+                        ? "這個情境一句都沒有，先在左邊打一句短句。"
+                        : missing > 0
+                            ? $"把「{category}」還缺語音的 {missing} 句送去橋接合成。"
+                            : $"「{category}」沒有缺語音的句子，按了也不會做事。");
+            }
+
+            // ── 試播：不吃總開關、不吃冷卻，也不會把冷卻往後推 ──
+            ImGui.TableNextColumn();
+            ImGui.BeginDisabled(cached == 0);
+            if (ImGui.Button($"試播##shortTest-{i}"))
+                plugin.RunCategoryTest(category);
+            ImGui.EndDisabled();
+
+            // 🔴 同上：沒有 WAV 的時候這顆是灰的，而那正是最需要說明的狀態。
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(
+                    cached > 0
+                        ? $"現在播一次「{category}」目前的語音。總開關關著也照播，而且不會推遲真正的冷卻。"
+                        : "尚未合成——先按左邊的「合成」做出語音才播得了。");
+            }
+        }
+
+        ImGui.EndTable();
+
+        if (shortLineNotice.Length > 0)
+        {
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextColored(shortLineNoticeIsError ? ColorBad : ColorUnknown, shortLineNotice);
+            ImGui.PopTextWrapPos();
+        }
+
+        if (plugin.LastTestMessage.Length > 0)
+        {
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextDisabled(plugin.LastTestMessage);
+            ImGui.PopTextWrapPos();
+        }
+    }
+
+    /// <summary>
+    /// 把「短句」欄位的內容寫回 pool.json：這個情境變成<b>只有這一句</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 有工作在跑的時候<b>直接拒絕，而且把草稿留著</b>——池是整份重寫的，
+    /// 這時候寫進去會被背景工作蓋掉；把使用者剛打的字丟掉更糟。
+    /// <para>
+    /// 📌 結果訊息一律寫在表格下面的列上：這是一個<b>破壞性</b>操作，
+    /// 「刪了幾句、還要不要重新合成」不可以藏在 tooltip 裡。
+    /// </para>
+    /// </remarks>
+    private void CommitShortLine(string category, string raw)
+    {
+        var text = PraiseText.Normalize(raw);
+
+        if (text.Length == 0)
+        {
+            shortDrafts.Remove(category);
+            shortLineNotice = $"「{category}」的短句不能是空的，這次沒有改動。";
+            shortLineNoticeIsError = true;
+            return;
+        }
+
+        if (plugin.Jobs.IsRunning)
+        {
+            // 草稿刻意留著：使用者剛打完的字不可以因為背景在跑就人間蒸發。
+            shortLineNotice = "有工作正在跑，這次沒有寫進去。等它跑完再按一次 Enter。";
+            shortLineNoticeIsError = true;
+            return;
+        }
+
+        if (!plugin.Pool.SetSingleLine(category, text, out var deletedWavs, out var error))
+        {
+            shortDrafts.Remove(category);
+            if (error == null) return;   // 內容一樣，什麼都沒動，也沒有話要說。
+
+            shortLineNotice = error;
+            shortLineNoticeIsError = true;
+            return;
+        }
+
+        shortDrafts.Remove(category);
+        statsRefreshedUtc = DateTime.MinValue;
+        shortLineNoticeIsError = false;
+
+        var hasVoice = plugin.Pool.CachedCountOf(category) > 0;
+        shortLineNotice = $"「{category}」已改成「{text}」"
+                          + (hasVoice ? "（這句已經有語音了）。" : "——還沒有語音，記得按同一列的「合成」。")
+                          + (deletedWavs > 0 ? $"順便刪掉 {deletedWavs} 個沒人在用的舊語音。" : string.Empty);
+    }
     /// <summary>
     /// 情境表格：每個情境一列，句數／已合成數／單獨生成／單獨合成。
     /// </summary>
@@ -756,13 +1159,6 @@ public sealed class ConfigWindow : Window
 
         DrawDeleteCategoryConfirm();
         DrawCategoryEditor();
-
-        ImGui.Spacing();
-        DrawResetPool();
-
-        ImGui.TextDisabled("池與語音快取的位置");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"{plugin.Pool.PoolPath}\n{plugin.Pool.CacheDirectory}");
     }
 
     /// <summary>情境描述在表格列上最多顯示幾個字（其餘收進 tooltip）。</summary>
@@ -1095,6 +1491,17 @@ public sealed class ConfigWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("存在這個外掛的設定檔裡，不會進版控、不會寫進記錄檔。");
 
+        // 🔴 遮罩過的欄位裡，「空的」與「填了但看不見」長得一模一樣。
+        //    所以狀態要寫在列上——而且只寫「有沒有」，絕不回顯金鑰本身（連前幾碼都不行）。
+        ImGui.SameLine();
+        if (Config.GeminiApiKey.Length > 0)
+            ImGui.TextColored(ColorOk, "（已設定）");
+        else
+            ImGui.TextColored(ColorUnknown, "（未設定）");
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("金鑰不會顯示出來，也不會寫進記錄檔。要換就直接在左邊重打一次。");
+
         var model = Config.GeminiModel;
         ImGui.SetNextItemWidth(300f);
         if (ImGui.InputText("模型##geminiModel", ref model, 128))
@@ -1116,7 +1523,15 @@ public sealed class ConfigWindow : Window
         ImGui.TextDisabled("（每次生成句數在上面的情境表格旁邊）");
     }
 
-    private void DrawJobButtons()
+    /// <summary>
+    /// 「全部擴充」（Gemini）——<b>只畫在「進階」收合區裡面</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這顆按鈕會連網、要金鑰，而且生出來的是<b>多句</b>——與主畫面「一個情境一句」的形態相反。
+    /// 所以它不可以出現在主畫面上：使用者按下去之後每個情境會多出好幾句，
+    /// 而挑句是隨機的，聽起來就會變成「怎麼每次講的都不一樣」。
+    /// </remarks>
+    private void DrawExpandRow()
     {
         var running = plugin.Jobs.IsRunning;
 
@@ -1135,7 +1550,18 @@ public sealed class ConfigWindow : Window
                 + "落後的那一類用上面表格那一列的「生成」單獨補就好。");
         }
 
-        ImGui.SameLine();
+    }
+
+    /// <summary>
+    /// 「預合成全部」＋取消＋進度／上次結果——<b>主畫面</b>那一排。
+    /// </summary>
+    /// <remarks>
+    /// 📌 進度與結果刻意留在主畫面：「進階」裡的生成工作跑起來時，
+    /// 使用者可能已經把收合區關掉了，把唯一的進度顯示藏在裡面等於「按了沒反應」。
+    /// </remarks>
+    private void DrawPrecacheRow()
+    {
+        var running = plugin.Jobs.IsRunning;
 
         ImGui.BeginDisabled(running);
         if (ImGui.Button("預合成全部##precache"))
@@ -1151,8 +1577,6 @@ public sealed class ConfigWindow : Window
             if (ImGui.Button("取消##cancelJob"))
                 plugin.Jobs.Cancel();
         }
-
-        DrawLengthLimit();
 
         // 進度與結果都在列上（長文字才收進 tooltip）。
         if (running)
