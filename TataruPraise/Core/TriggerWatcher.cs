@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using System.Numerics;
-using Dalamud.Game.Addon.Lifecycle;
-using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.SubKinds;
@@ -23,7 +21,7 @@ namespace TataruPraise.Core;
 /// 憑印象或照國際服寫死一定錯，而且錯法是靜默的（比不到就永遠不觸發，看起來像功能沒做）。
 /// 全部走 Dalamud 的<b>結構化</b>事件或直接讀遊戲數值：
 /// 密語看的是 <see cref="XivChatType.TellIncoming"/> <b>這個列舉值</b>，不是訊息內容；
-/// 組隊邀請與交易請求看的是<b>那個視窗有沒有被建出來</b>，不是視窗裡的字。
+/// 組隊邀請與交易請求看的是<b>那個視窗看不看得見</b>（每 250ms 輪詢、取上升緣），不是視窗裡的字。
 /// <para>
 /// 🔴 <b>只讀狀態、只出聲</b>：不施放、不走位、不改目標、不按任何按鈕。
 /// </para>
@@ -102,10 +100,22 @@ public sealed class TriggerWatcher : IDisposable
     /// 其中對應組隊的就是 <c>_NotificationParty</c>。
     /// </para>
     /// <para>
-    /// ⚠️ <b>還沒有實機驗過</b>。同族命名是很強的間接證據，但「哪一個 addon 是收到邀請時彈出的那個」
-    /// 終究要開遊戲才算數。addon 名對不上的失敗形狀是<b>不響、不崩、也沒有錯誤訊息</b>
-    /// （<see cref="IAddonLifecycle"/> 對沒出現過的名字不會抱怨），所以真的沒響的時候，
-    /// 第一件事是確認這個字串，不是去查冷卻或機率——啟動時的 <c>Information</c> 記錄有印出來。
+    /// 📌 更硬的證據（2026-08-29 反組譯）：通知彈窗是一張<b>指標陣列</b>（基底 <c>0x142123DA0</c>、
+    /// 每格 8 bytes），長度 34 是從關閉函式 <c>0x14146CC20</c> 開頭的界限檢查 <c>cmp edi, 0x22</c>
+    /// <b>讀出來</b>的（不是數出來的）；<c>_NotificationParty</c> 是<b>第 12 格</b>
+    /// （<c>0x142123E00</c> → <c>0x1421149A8</c>，全檔僅 1 份）。34 種共用同一個 vtable
+    /// <c>0x142123B50</c> 與同一份 <c>Notification.uld</c>，但<b>各自有獨立的 AtkUnitBase 名字</b>，
+    /// 所以用名字分辨得出來。旁證：TCToolbox 已在用同表第 24 格的 <c>_NotificationCircleBook</c>；
+    /// 台服 <c>Addon.csv</c> 第 170~172 列正是連號的「入隊邀請／好友申請／通訊貝邀請」。
+    /// </para>
+    /// <para>
+    /// 🔴 <c>SelectYesno</c> 不是這個彈窗，是<b>按下彈窗按鈕之後</b>才出現的第二層
+    /// （<c>Addon#120</c> 加入／<c>Addon#121</c>「確定要拒絕…發來的組隊邀請嗎？」）。
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>「第 12 格就是收到組隊邀請的那一個」這最後一環還沒有實機驗過</b>——型別 12 的寫入端
+    /// 離線追不到。不成立的話是<b>在錯的時機響或永遠不響</b>，不會崩潰。沒響的時候第一件事是
+    /// 確認這個字串，不是去查冷卻或機率——啟動時的 <c>Information</c> 記錄有印出來。
     /// </para>
     /// </remarks>
     internal const string PartyInviteAddon = "_NotificationParty";
@@ -114,13 +124,22 @@ public sealed class TriggerWatcher : IDisposable
     /// 交易視窗的 addon 名。
     /// </summary>
     /// <remarks>
-    /// 📌 台服執行檔裡跟交易有關的 UI 只有 <c>Trade</c> 與 <c>TradeMultiple</c>
-    /// （<c>TradeMultiple</c> 是「一次交多個」那個，不是請求）；艦隊裡 Lifestream 與 AutoRetainer
+    /// 📌 <c>Trade</c> 是主 addon 定義表（<c>0x141FE7160</c>、24-byte stride、931 筆）的第 44 筆，
+    /// 而且 <c>ui/uld/Trade.uld</c> 在台服 sqpack 裡確實存在；艦隊裡 Lifestream 與 AutoRetainer
     /// 也都是用 <c>"Trade"</c> 去抓交易視窗的，所以這個名字是確定的。
     /// <para>
+    /// 🔴 <b>整顆客戶端沒有「交易請求」專用彈窗</b>：34 個 <c>_Notification*</c> 裡沒有交易，
+    /// 931 筆 addon 表裡也沒有 <c>TradeRequest</c> 之類的東西，台服 <c>Addon.csv</c> 的交易叢集
+    /// （#201~#208）全是介面標籤、沒有任何「要接受交易申請嗎？」的提示文字。
+    /// ⇒ 收到請求時直接開的就是 <c>Trade</c> 視窗本身（拒絕＝按「中止交易」）。
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>不要跟 <c>TradeMultiple</c> 搞混</b>：那是對 NPC 一次交多個道具的對話框（AgentId 149），
+    /// 跟玩家間交易無關；YesAlready 設定裡的 <c>TradeMultiple</c> 講的也是它。
+    /// </para>
+    /// <para>
     /// ⚠️ <b>這個視窗在「自己主動發起交易」時也會被建出來</b>，所以那時候也會喊一聲。
-    /// 沒有辦法只靠 <c>PostSetup</c> 分辨是誰發起的——要分辨得去讀視窗內容，
-    /// 那是為了一個提示音不值得的複雜度。
+    /// 要分辨得去讀視窗內容，那是為了一個提示音不值得的複雜度。
     /// </para>
     /// </remarks>
     internal const string TradeAddon = "Trade";
@@ -140,10 +159,6 @@ public sealed class TriggerWatcher : IDisposable
         Svc.ClientState.CfPop += OnCfPop;
         Svc.Chat.ChatMessage += OnChatMessage;
         Svc.Framework.Update += OnFrameworkUpdate;
-
-        // 📌 註冊即使名字不存在也不會出錯——那正是它靜默失敗的原因，見常數上的註解。
-        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, PartyInviteAddon, OnPartyInviteAddon);
-        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, TradeAddon, OnTradeAddon);
     }
 
     public void Dispose()
@@ -158,9 +173,6 @@ public sealed class TriggerWatcher : IDisposable
         Svc.ClientState.CfPop -= OnCfPop;
         Svc.Chat.ChatMessage -= OnChatMessage;
         Svc.Framework.Update -= OnFrameworkUpdate;
-
-        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, PartyInviteAddon, OnPartyInviteAddon);
-        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, TradeAddon, OnTradeAddon);
     }
 
     /// <summary>
@@ -209,26 +221,70 @@ public sealed class TriggerWatcher : IDisposable
         service.TryTrigger(PraiseCategory.DutyPop, chanceOverride: 100);
     }
 
-    /// <summary>收到組隊邀請（邀請彈窗被建出來）。</summary>
+    /// <summary>上一輪輪詢時，組隊邀請彈窗是不是可見的。</summary>
+    /// <remarks>🔴 只存 <see cref="bool"/>。原生指標一律當輪解析、當輪丟棄。</remarks>
+    private bool partyInviteVisible;
+
+    /// <summary>上一輪輪詢時，交易視窗是不是可見的。</summary>
+    private bool tradeVisible;
+
+    /// <summary>
+    /// 彈窗類的通知：用「看不見 → 看得見」的<b>邊緣</b>觸發，不用 addon 生命週期事件。
+    /// </summary>
     /// <remarks>
-    /// 🔴 <b>只是聽這個視窗出現，不碰它</b>——不按同意、不按拒絕、不讀它的欄位。
-    /// 📌 <paramref name="args"/> 不使用：我們要的資訊就是「它出現了」。
+    /// 🔴 <b>刻意不用 <c>IAddonLifecycle</c> 的 <c>PostSetup</c>。</b>
+    /// 台服客戶端顯示通知彈窗的路徑（<c>0x14146E500</c>）是<b>先用名字查有沒有既存的、查到就重用</b>，
+    /// 只有查不到才配置新的。而關閉走的是 <c>AtkUnitBase::Close(false)</c>——它到底有沒有真的釋放掉，
+    /// 離線判不出來。如果沒有釋放，<c>PostSetup</c> 就<b>只有登入後第一次邀請會觸發</b>，
+    /// 之後每一次都靜默無反應，而且看起來會像「冷卻沒到」或「機率沒中」，完全誤導。
+    /// <para>
+    /// 📌 旁證：TCToolbox 對同一族的 <c>_NotificationCircleBook</c> 用的是 <c>PreDraw</c> 而不是
+    /// <c>PostSetup</c>（<c>Modules/AutoHideNeedlessPopups.cs</c>），它的上游 DailyRoutines 也是——
+    /// 很可能正是為了繞開同一件事。
+    /// </para>
+    /// <para>
+    /// 🔴 改成輪詢可見性之後，「重用還是重建」這個問題<b>整個不存在</b>了：不管客戶端在底下怎麼搞，
+    /// 「本來看不見、現在看得見」就是一次新的彈窗。代價是最多 250ms 的延遲，對提示音無所謂。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>只讀 <c>IsVisible</c>，不碰視窗裡的任何東西</b>——不按同意、不按拒絕、不讀欄位。
+    /// <see cref="Dalamud.Game.NativeWrapper.AtkUnitBasePtr"/> 是當輪解析、當輪用完就丟的值型別包裝，
+    /// <b>不跨輪保存</b>；跨輪留下來的只有上面那兩個 <see cref="bool"/>。
+    /// </para>
     /// </remarks>
-    private void OnPartyInviteAddon(AddonEvent type, AddonArgs args)
+    private void PollPopups()
     {
-        if (!config.TriggerPartyInvite) return;
+        if (config.TriggerPartyInvite)
+        {
+            var visible = IsAddonVisible(PartyInviteAddon);
+            if (visible && !partyInviteVisible)
+                service.TryTrigger(PraiseCategory.PartyInvite, chanceOverride: 100);
+            partyInviteVisible = visible;
+        }
+        else
+        {
+            partyInviteVisible = false;
+        }
 
-        service.TryTrigger(PraiseCategory.PartyInvite, chanceOverride: 100);
+        if (config.TriggerTradeRequest)
+        {
+            var visible = IsAddonVisible(TradeAddon);
+            if (visible && !tradeVisible)
+                service.TryTrigger(PraiseCategory.TradeRequest, chanceOverride: 100);
+            tradeVisible = visible;
+        }
+        else
+        {
+            tradeVisible = false;
+        }
     }
 
-    /// <summary>收到交易請求（交易視窗被建出來）。</summary>
-    /// <remarks>🔴 只是聽它出現，不碰它。</remarks>
-    private void OnTradeAddon(AddonEvent type, AddonArgs args)
-    {
-        if (!config.TriggerTradeRequest) return;
-
-        service.TryTrigger(PraiseCategory.TradeRequest, chanceOverride: 100);
-    }
+    /// <summary>某個 addon 現在存在而且看得見嗎。</summary>
+    /// <remarks>
+    /// 📌 <see cref="Dalamud.Game.NativeWrapper.AtkUnitBasePtr.IsVisible"/> 自己會判 null，
+    /// 所以名字不存在時就是回 <c>false</c>，不需要 <c>unsafe</c>、也不會解參考空指標。
+    /// </remarks>
+    private static bool IsAddonVisible(string name) => Svc.GameGui.GetAddonByName(name).IsVisible;
 
     /// <summary>
     /// 副本完成。<b>首次通關</b>走另一個機率。
@@ -383,6 +439,11 @@ public sealed class TriggerWatcher : IDisposable
         lastGil = -1;
         lowHpArmed = true;
         lastEnemyDistance.Clear();
+
+        // 🔴 彈窗的可見性基準也要清掉：不清的話，登出時剛好開著交易視窗，
+        //    下次登入第一輪會看到「看不見」，再開才觸發——但反過來留著 true 更糟。
+        partyInviteVisible = false;
+        tradeVisible = false;
     }
 
     private void OnFrameworkUpdate(IFramework framework)
@@ -392,6 +453,7 @@ public sealed class TriggerWatcher : IDisposable
         {
             lastAlertPollUtc = now;
             PollAlerts();
+            PollPopups();
         }
 
         if (!config.TriggerGilMilestone) return;

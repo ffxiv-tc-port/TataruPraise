@@ -104,7 +104,7 @@ public sealed class Plugin : IDalamudPlugin
         Svc.Log.Information(
             "[TataruPraise] 啟動：監聽的 addon＝"
             + $"組隊邀請「{TriggerWatcher.PartyInviteAddon}」、交易請求「{TriggerWatcher.TradeAddon}」"
-            + "（名字對不上就是靜默不響，不會有錯誤訊息）。");
+            + "（每 250ms 輪詢可見性、取上升緣；名字對不上就是靜默不響，不會有錯誤訊息）。");
 
         if (total > 0 && cached == 0)
         {

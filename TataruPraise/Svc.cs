@@ -17,6 +17,6 @@ public sealed class Svc
     [PluginService] public static IObjectTable Objects { get; private set; } = null!;
     [PluginService] public static IChatGui Chat { get; private set; } = null!;
     [PluginService] public static IDtrBar DtrBar { get; private set; } = null!;
-    [PluginService] public static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
+    [PluginService] public static IGameGui GameGui { get; private set; } = null!;
     [PluginService] public static IPluginLog Log { get; private set; } = null!;
 }

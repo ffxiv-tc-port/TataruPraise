@@ -190,25 +190,36 @@
 |---|---|---|---|
 | 被密語 | `被密語` | `IChatGui.ChatMessage` 的 `type == XivChatType.TellIncoming` | 🔴 **只看聊天類型這個列舉值，一個字都不比對**。自己送的密語是 `TellOutgoing`，不會自己喊自己 |
 | 副本排到（內建） | `副本排到` | `IClientState.CfPop` | 跟 NotificationMaster 用 IPC 叫的**是同一個鍵**；兩邊都開也只會聽到一聲（冷卻 5 秒吸掉第二次） |
-| 組隊邀請 | `組隊邀請` | addon `_NotificationParty` 的 `PostSetup` | ⚠️ 見下面的警告 |
-| 交易請求 | `交易請求` | addon `Trade` 的 `PostSetup` | ⚠️ **自己主動發起交易時也會響**（`PostSetup` 分不出誰發起的） |
+| 組隊邀請 | `組隊邀請` | addon `_NotificationParty` 由不可見變成可見 | ⚠️ 見下面的警告 |
+| 交易請求 | `交易請求` | addon `Trade` 由不可見變成可見 | ⚠️ **自己主動發起交易時也會響**（分不出誰發起的） |
 
 > 🔴 **`被密語` 與 `私訊` 是兩個不同的鍵**，刻意的：`私訊` 沒有內建觸發、留給
 > NotificationMaster 之類的外部呼叫端；`被密語` 是這個外掛自己訂閱聊天事件觸發的。
 > 兩邊都開就會聽到兩次——想只聽一次就關掉其中一邊。
 
-> 📌 **名字的離線證據**（掃台服執行檔，先用 `SelectYesno`／`Trade`／`_PartyList` 校準過）：
-> 執行檔裡**沒有** `PartyInvite`／`InviteReply`／`_PartyInvite`；「有人要你答應一件事」的彈窗
-> 全部是 `_Notification*` 這一族（`_NotificationFriend` 好友、`_NotificationFcJoin` 部隊、
-> `_NotificationLinkShell` 通訊貝、`_NotificationReadyCheck` 準備確認…），組隊的就是 `_NotificationParty`。
-> `Trade` 則另有旁證：Lifestream 與 AutoRetainer 都是用這個名字抓交易視窗。
-> **但兩者都還沒有實機驗過。**
+> 📌 **名字的離線證據**（掃台服執行檔＋反組譯，先用 `SelectYesno`／`Trade`／`_PartyList`／
+> `ContentsFinderConfirm` 校準過，另加合成負例）：執行檔裡**沒有** `PartyInvite`／`InviteReply`／
+> `_PartyInvite`（各 0 次）。通知彈窗是一張**指標陣列**（基底 `0x142123DA0`、每格 8 bytes），
+> 長度 34 是從關閉函式的界限檢查 `cmp edi, 0x22` **讀出來**的、不是數出來的；
+> `_NotificationParty` 是**第 12 格**。同表還有 `_NotificationFriend`（好友）、`_NotificationFcJoin`（部隊）、
+> `_NotificationLinkShell`（通訊貝）、`_NotificationReadyCheck`（準備確認）…語意一致；台服 `Addon.csv` 第 170~172 列
+> 正是連號的「入隊邀請／好友申請／通訊貝邀請」。`Trade` 是主 addon 表第 44 筆，而且客戶端裡
+> **根本沒有交易請求專用彈窗**，所以收到請求時開的就是 `Trade` 本身。
+> **但「第 12 格＝收到組隊邀請」這最後一環還沒有實機驗過。**
+>
+> 🔴 **刻意不用 `IAddonLifecycle` 的 `PostSetup`，改成每 250ms 輪詢可見性、取上升緣。**
+> 客戶端顯示通知彈窗的路徑是**先用名字查有沒有既存的、查到就重用**，只有查不到才配置新的；
+> 關閉走 `AtkUnitBase::Close(false)`，到底有沒有真的釋放掉離線判不出來。如果沒有釋放，
+> `PostSetup` 就**只有登入後第一次邀請會觸發**，之後全部靜默——而且看起來會像「冷卻沒到」
+> 或「機率沒中」。改成輪詢之後這個問題整個不存在。（旁證：TCToolbox 對同一族的
+> `_NotificationCircleBook` 用的也是 `PreDraw` 不是 `PostSetup`。）
 
 > ⚠️ **組隊邀請與交易請求靠的是 addon 名字**，而 addon 名對不上的失敗形狀是
 > **不響、不崩、也沒有錯誤訊息**（`IAddonLifecycle` 對沒出現過的名字不會抱怨）。
 > 所以真的沒響的時候，第一件事是確認 `TriggerWatcher` 裡那兩個常數（啟動時的 `Information` 記錄有印出來），不是去查冷卻或機率。
 > 🔴 **刻意不用 `SelectYesno`**：那是通用的是／否對話框，從丟棄道具到退出副本都用它，
-> 拿它當判準會變成什麼都喊一聲。
+> 拿它當判準會變成什麼都喊一聲。而且組隊邀請的 `SelectYesno` 是**按下彈窗按鈕之後**才出現的
+> 第二層（`Addon#120` 加入／`Addon#121` 拒絕），不是彈窗本身。
 
 **首次通關**：`DutyCompleted` 給的是 territory id，外掛用 Lumina 的 `TerritoryType` 表反查
 `ContentFinderCondition`，把通關過的 CFC id 記進設定。第一次看到某個副本就用「首次通關機率」，
