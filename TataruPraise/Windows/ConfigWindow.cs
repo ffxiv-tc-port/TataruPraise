@@ -317,6 +317,12 @@ public sealed class ConfigWindow : Window
     private readonly Dictionary<string, (int Total, int Cached)> statsCache = [];
     private DateTime statsRefreshedUtc = DateTime.MinValue;
 
+    /// <summary>池裡超過目前句長上限的句數（跟著上面的統計一起、每秒重算一次）。</summary>
+    private int overLimitCount;
+
+    /// <summary>「移除超過上限的句子」按過第一下了嗎（第二下才真的刪）。</summary>
+    private bool prunePending;
+
     private void RefreshStatsIfStale()
     {
         var now = DateTime.UtcNow;
@@ -325,7 +331,13 @@ public sealed class ConfigWindow : Window
 
         foreach (var category in PraiseCategory.All)
             statsCache[category] = (plugin.Pool.CountOf(category), plugin.Pool.CachedCountOf(category));
+
+        overLimitCount = plugin.Pool.CountLongerThan(ClampedMaxLength());
     }
+
+    /// <summary>設定裡的句長上限，夾在滑桿範圍內（設定檔被手改成離譜的值也不會讓 UI 壞掉）。</summary>
+    private int ClampedMaxLength()
+        => Math.Clamp(Config.MaxPraiseLength, PraiseText.SliderMin, PraiseText.SliderMax);
 
     private void DrawPoolStats()
     {
@@ -434,6 +446,8 @@ public sealed class ConfigWindow : Window
                 plugin.Jobs.Cancel();
         }
 
+        DrawLengthLimit();
+
         // 進度與結果都在列上（長文字才收進 tooltip）。
         if (running)
         {
@@ -457,6 +471,77 @@ public sealed class ConfigWindow : Window
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip(last);
             }
         }
+    }
+
+    /// <summary>
+    /// 句長上限：生成端的硬過濾，外加一顆手動清理既有長句的按鈕。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>滑桿只影響「之後生的句子」。</b>pool.json 裡已經存在的長句是使用者的資料，
+    /// 調滑桿不會動到它們——要清掉只能按下面那顆按鈕，而且按了還要再確認一次。
+    /// 📌 「有幾句超過上限」畫在列上（不藏 tooltip）：使用者調完滑桿的下一秒就要看得到影響範圍。
+    /// </remarks>
+    private void DrawLengthLimit()
+    {
+        ImGui.Spacing();
+
+        var maxLength = ClampedMaxLength();
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt("句長上限（字）##maxPraiseLength", ref maxLength, PraiseText.SliderMin, PraiseText.SliderMax))
+        {
+            Config.MaxPraiseLength = Math.Clamp(maxLength, PraiseText.SliderMin, PraiseText.SliderMax);
+            Config.Save();
+            statsRefreshedUtc = DateTime.MinValue;
+            prunePending = false;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "「擴充誇獎池」生回來的句子，超過這個字數就直接丟掉，不會進池（丟了幾句會寫在下面的結果與記錄檔裡）。\n"
+                + "字數不含空白，中文標點算在內。提示詞本身要求的是 12～25 字，上限預設 28 是留給標點的餘裕。\n"
+                + "🔴 這個上限只擋新生成的句子；pool.json 裡已經有的長句不會被動到。");
+        }
+
+        var overLimit = overLimitCount;
+        if (overLimit <= 0)
+        {
+            prunePending = false;
+            ImGui.TextDisabled($"池裡沒有超過 {maxLength} 字的句子。");
+            return;
+        }
+
+        ImGui.TextColored(ColorUnknown, $"池裡有 {overLimit} 句超過 {maxLength} 字（既有句子不會自動刪掉）");
+
+        ImGui.BeginDisabled(plugin.Jobs.IsRunning);
+        if (!prunePending)
+        {
+            if (ImGui.Button($"移除超過上限的句子（{overLimit} 句）##prune"))
+                prunePending = true;
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    "把池裡超過上限的句子從 pool.json 刪掉，連同它們已經合成好的 WAV 快取一起刪。\n"
+                    + "🔴 不可回復。按下去之後還會再確認一次才真的執行。");
+            }
+        }
+        else
+        {
+            ImGui.TextColored(ColorBad, $"確定要刪掉這 {overLimit} 句與它們的語音快取嗎？不可回復。");
+            if (ImGui.Button("確定移除##pruneConfirm"))
+            {
+                plugin.Jobs.StartPruneLongLines();
+                prunePending = false;
+                statsRefreshedUtc = DateTime.MinValue;
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("先不要##pruneCancel"))
+                prunePending = false;
+        }
+
+        ImGui.EndDisabled();
     }
 
     private void ProbeSpeakers()

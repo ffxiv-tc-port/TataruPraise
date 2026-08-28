@@ -67,6 +67,32 @@ public sealed class PoolJobs : IDisposable
         return Start("預合成語音快取", PrecacheAudioAsync);
     }
 
+    /// <summary>
+    /// 移除池裡超過句長上限的句子（連同語音快取）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 只能由使用者在設定視窗明確按下去才會跑：刪的是使用者自己的 pool.json 內容，不可回復。
+    /// 改滑桿、載入外掛、擴充池都<b>不會</b>順手清舊句子。
+    /// </remarks>
+    public bool StartPruneLongLines()
+    {
+        if (running) return false;
+
+        var max = ClampedMaxLength();
+        return Start("移除超長句子", _ =>
+        {
+            var removed = pool.RemoveLongerThan(max, out var wavs);
+            return Task.FromResult(
+                removed == 0
+                    ? $"移除超長句子：池裡沒有超過 {max} 字的句子，什麼都沒動。"
+                    : $"移除超長句子：刪掉 {removed} 句、連帶刪掉 {wavs} 個語音快取（上限 {max} 字）。");
+        });
+    }
+
+    /// <summary>句長上限（夾在 UI 滑桿的範圍內；設定檔被手改成離譜的值也不會炸）。</summary>
+    private int ClampedMaxLength()
+        => Math.Clamp(config.MaxPraiseLength, PraiseText.SliderMin, PraiseText.SliderMax);
+
     private bool Start(string name, Func<CancellationToken, Task<string>> work)
     {
         cts?.Dispose();
@@ -110,9 +136,11 @@ public sealed class PoolJobs : IDisposable
         var key = config.GeminiApiKey;
         var model = config.GeminiModel;
         var count = Math.Clamp(config.GenerateCountPerCategory, 1, 50);
+        var maxLength = ClampedMaxLength();
 
         var total = 0;
         var details = new List<string>();
+        var stats = new GenerateStats();
 
         for (var i = 0; i < PraiseCategory.All.Length; i++)
         {
@@ -120,18 +148,28 @@ public sealed class PoolJobs : IDisposable
             var category = PraiseCategory.All[i];
             progress = $"{i + 1}/{PraiseCategory.All.Length}　{category}";
 
-            var lines = await GeminiClient.GenerateAsync(key, model, category, count, token).ConfigureAwait(false);
-            var added = pool.AddLines(category, lines);
+            var lines = await GeminiClient
+                .GenerateAsync(key, model, category, count, maxLength, token, stats)
+                .ConfigureAwait(false);
+            var added = pool.AddLines(category, lines, out var duplicates);
+            stats.Duplicate += duplicates;
             total += added;
             details.Add($"{category} +{added}");
         }
 
+        // 🔴 被過濾掉的數字要跟著結果一起回去：全部被丟掉的時候，「一句都沒加」與
+        // 「生了 40 句但全都太長」是完全不同的兩件事，使用者要能分得出來。
+        var dropped = stats.Describe();
+        var droppedSuffix = dropped.Length > 0 ? $"（{dropped}，上限 {maxLength} 字）" : string.Empty;
+
         if (total == 0)
         {
-            return "擴充誇獎池：一句都沒有加進去（金鑰、模型名或額度的問題，詳見記錄檔）。";
+            return stats.AnyDropped
+                ? $"擴充誇獎池：一句都沒有加進去{droppedSuffix}。上限太緊的話可以把「句長上限」調大一點。"
+                : "擴充誇獎池：一句都沒有加進去（金鑰、模型名或額度的問題，詳見記錄檔）。";
         }
 
-        return $"擴充誇獎池：新增 {total} 句（{string.Join("、", details)}）。"
+        return $"擴充誇獎池：新增 {total} 句（{string.Join("、", details)}）{droppedSuffix}。"
              + "新句子還沒有語音，記得接著按「預合成語音快取」。";
     }
 

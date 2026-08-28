@@ -67,5 +67,15 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>按一次「擴充誇獎池」時，每個情境要生幾句。</summary>
     public int GenerateCountPerCategory { get; set; } = 10;
 
+    /// <summary>
+    /// 句長上限（字，不含空白；中文標點算在內）。生成回來超過這個長度的句子直接丟掉。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這是<b>生成端</b>的閘門，只擋新句子；pool.json 裡既有的長句<b>不會</b>被它動到
+    /// （那是使用者的資料）。要清掉舊的長句請按設定視窗裡的「移除超過上限的句子」。
+    /// 📌 預設 28＝提示詞要求的 25 字再加幾格標點的餘裕。
+    /// </remarks>
+    public int MaxPraiseLength { get; set; } = Core.PraiseText.DefaultMaxLength;
+
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
