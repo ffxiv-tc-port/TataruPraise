@@ -42,6 +42,11 @@ public sealed class PraisePool
 
     private readonly object gate = new();
     private readonly Random random = new();
+
+    private static readonly TimeSpan AvailabilityCacheDuration = TimeSpan.FromSeconds(2);
+    private readonly object availabilityGate = new();
+    private DateTime availabilityCheckedUtc = DateTime.MinValue;
+    private bool availabilityCache;
     private readonly string dataDir;
     private readonly string poolPath;
     private readonly string cacheDir;
@@ -274,14 +279,32 @@ public sealed class PraisePool
         }
     }
 
-    /// <summary>任何一個情境有可播的內容嗎（IPC 的 IsAvailable 用）。</summary>
+    /// <summary>
+    /// 任何一個情境有可播的內容嗎（IPC 的 <c>IsAvailable</c> 用）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 結果快取 2 秒。這個方法會對整池做 <see cref="File.Exists"/>，而它是<b>公開的 IPC 端點</b>——
+    /// 呼叫端很可能在自己的每幀迴圈裡問它，沒有快取的話等於幫別人的外掛裝了一台磁碟壓力機。
+    /// 2 秒的誤差對「現在能不能出聲」這個問題沒有意義（預合成本來就要跑好幾分鐘）。
+    /// </remarks>
     public bool HasAnyCached()
     {
-        foreach (var category in PraiseCategory.All)
+        lock (availabilityGate)
         {
-            if (PickCached(category) != null) return true;
+            var now = DateTime.UtcNow;
+            if (now - availabilityCheckedUtc < AvailabilityCacheDuration) return availabilityCache;
+            availabilityCheckedUtc = now;
         }
 
-        return false;
+        var any = false;
+        foreach (var category in PraiseCategory.All)
+        {
+            if (PickCached(category) == null) continue;
+            any = true;
+            break;
+        }
+
+        lock (availabilityGate) availabilityCache = any;
+        return any;
     }
 }

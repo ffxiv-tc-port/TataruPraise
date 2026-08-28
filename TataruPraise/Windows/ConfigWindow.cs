@@ -306,8 +306,31 @@ public sealed class ConfigWindow : Window
         DrawJobButtons();
     }
 
+    /// <summary>
+    /// 池統計的快取。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <see cref="PraisePool.CachedCountOf"/> 會對每一句做 <see cref="System.IO.File.Exists"/>。
+    /// 直接畫在每一幀等於在 UI 執行緒上每秒做上千次磁碟查詢，所以每秒只重算一次。
+    /// 副作用是預合成跑的時候數字最多晚一秒才跳——那正好是人看得懂的更新速度。
+    /// </remarks>
+    private readonly Dictionary<string, (int Total, int Cached)> statsCache = [];
+    private DateTime statsRefreshedUtc = DateTime.MinValue;
+
+    private void RefreshStatsIfStale()
+    {
+        var now = DateTime.UtcNow;
+        if (statsCache.Count > 0 && now - statsRefreshedUtc < TimeSpan.FromSeconds(1)) return;
+        statsRefreshedUtc = now;
+
+        foreach (var category in PraiseCategory.All)
+            statsCache[category] = (plugin.Pool.CountOf(category), plugin.Pool.CachedCountOf(category));
+    }
+
     private void DrawPoolStats()
     {
+        RefreshStatsIfStale();
+
         ImGui.TextDisabled("誇獎池（每個情境：句數／已合成語音的句數）");
         if (ImGui.BeginTable("##poolStats", 3, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
         {
@@ -318,8 +341,7 @@ public sealed class ConfigWindow : Window
 
             foreach (var category in PraiseCategory.All)
             {
-                var total = plugin.Pool.CountOf(category);
-                var cached = plugin.Pool.CachedCountOf(category);
+                var (total, cached) = statsCache.TryGetValue(category, out var s) ? s : (0, 0);
 
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
