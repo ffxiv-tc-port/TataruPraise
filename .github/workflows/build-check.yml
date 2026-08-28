@@ -1,4 +1,6 @@
-# 台服 (TC) 建置檢查（TataruPraise）。Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)，外掛必須是 net9.0-windows7.0。
+# 台服 (TC) 建置檢查（TataruPraise）。Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)。
+# ⚠️ 跑 windows-latest：NAudio 元套件會拉 NAudio.WinForms（要 WindowsDesktop framework），
+# ubuntu runner 會回 NETSDK1073；與 Saucy 的 build-check 同一招。
 name: Build Check
 
 on:
@@ -12,9 +14,7 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: ubuntu-latest
-    env:
-      DALAMUD_HOME: /tmp/dalamud
+    runs-on: windows-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -27,13 +27,15 @@ jobs:
           dotnet-version: 9.0.x
 
       - name: Download Dalamud (TC pin)
+        shell: pwsh
         run: |
-          wget https://github.com/ffxiv-tc-port/DalamudPluginsTC/releases/download/dalamud-pin-v13.0.0.16/dalamud-api13-net9.zip -O ${{ env.DALAMUD_HOME }}.zip
-          unzip ${{ env.DALAMUD_HOME }}.zip -d ${{ env.DALAMUD_HOME }} || [ $? -eq 1 ]
-          test -f ${{ env.DALAMUD_HOME }}/Dalamud.dll
-
-      - name: Restore Project
-        run: dotnet restore TataruPraise/TataruPraise.csproj
+          Invoke-WebRequest -Uri https://github.com/ffxiv-tc-port/DalamudPluginsTC/releases/download/dalamud-pin-v13.0.0.16/dalamud-api13-net9.zip -OutFile dalamud-pinned.zip
+          Expand-Archive -Force dalamud-pinned.zip "$env:DALAMUD_HOME"
+          if (-not (Test-Path "$env:DALAMUD_HOME\Dalamud.dll")) { throw "Dalamud.dll missing" }
+        env:
+          DALAMUD_HOME: ${{ github.workspace }}\dalamud
 
       - name: Build Project
         run: dotnet build --configuration Release TataruPraise/TataruPraise.csproj
+        env:
+          DALAMUD_HOME: ${{ github.workspace }}\dalamud
