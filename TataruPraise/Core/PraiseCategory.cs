@@ -74,6 +74,9 @@ public static class PraiseCategory
     /// <summary>通知：玩家警示。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
     public const string PlayerAlert = "玩家警示";
 
+    /// <summary>通知：被盯著（PeepingTom：有人把我設成目標）。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
+    public const string BeingWatched = "被盯著";
+
     /// <summary>
     /// 內建情境，順序即 UI 上的顯示順序。
     /// </summary>
@@ -106,6 +109,7 @@ public static class PraiseCategory
         Jackpot,
         NeedHelp,
         PlayerAlert,
+        BeingWatched,
     ];
 
     /// <summary>內建情境的預設「情境描述」（餵給文字後端，比分類名多一點上下文）。</summary>
@@ -135,6 +139,7 @@ public static class PraiseCategory
         [Jackpot] = "這是通知，不是誇獎：前輩中獎了（抽選、隨機獎勵之類）。只輸出 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
         [NeedHelp] = "這是通知，不是誇獎：自動化卡住了，需要前輩過來看一下。只輸出 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
         [PlayerAlert] = "這是通知，不是誇獎：附近出現了要注意的玩家。只輸出 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
+        [BeingWatched] = "這是通知，不是誇獎：有人把前輩設成了目標，正在盯著前輩看。只輸出 2~10 字的極短句，像喊出來的一樣；不要說明、不要鋪陳。",
     };
 
     /// <summary>
@@ -167,6 +172,7 @@ public static class PraiseCategory
         [Jackpot] = 12,
         [NeedHelp] = 12,
         [PlayerAlert] = 12,
+        [BeingWatched] = 12,
     };
 
     /// <summary>
@@ -192,6 +198,7 @@ public static class PraiseCategory
         [Jackpot] = 2,
         [NeedHelp] = 2,
         [PlayerAlert] = 2,
+        [BeingWatched] = 2,
     };
 
     /// <summary>
@@ -224,6 +231,7 @@ public static class PraiseCategory
         [Jackpot] = 5,
         [NeedHelp] = 5,
         [PlayerAlert] = 5,
+        [BeingWatched] = 5,
     };
 
     /// <summary>內建的句長下限覆寫；沒有就回 0（＝用全域下限）。</summary>

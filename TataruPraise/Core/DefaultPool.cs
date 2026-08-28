@@ -208,5 +208,13 @@ public static class DefaultPool
             "有人來了！",
             "小心周圍！",
         ],
+
+        [PraiseCategory.BeingWatched] =
+        [
+            "有人盯著你！",
+            "前輩，有人在看你！",
+            "被人看著唷！",
+            "有人選你了！",
+        ],
     };
 }

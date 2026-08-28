@@ -44,6 +44,7 @@ SOURCES = {
     "Jackpot": ("通知", "外部呼叫：中獎"),
     "NeedHelp": ("通知", "外部呼叫：自動化卡住需要人來看"),
     "PlayerAlert": ("通知", "外部呼叫：附近出現要注意的玩家"),
+    "BeingWatched": ("通知", "PeepingTom：有人把我設成目標"),
 }
 
 
