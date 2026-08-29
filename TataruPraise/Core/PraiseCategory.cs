@@ -38,6 +38,15 @@ public static class PraiseCategory
     /// </remarks>
     public const string Retainer = "僱員";
 
+    /// <summary>
+    /// AutoRetainer：稀有品繳交循環把所有角色都跑完了。<b>鍵名由 IPC 呼叫端逐字使用。</b>
+    /// </summary>
+    /// <remarks>
+    /// 📌 跟 <see cref="Retainer"/> 是<b>兩個不同的鍵</b>，刻意的：僱員探險是<b>單一角色</b>的日常事件，
+    /// 稀有品繳交是<b>整輪多角色跑完</b>的收尾。合成一個鍵的話，只想知道「整輪結束了」的人會被每個角色各響一次洗版。
+    /// </remarks>
+    public const string ExpertDelivery = "稀有品";
+
     /// <summary>Artisan：整份製作清單做完。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
     public const string Crafting = "製作";
 
@@ -123,6 +132,7 @@ public static class PraiseCategory
         GilMilestone,
         Submarine,
         Retainer,
+        ExpertDelivery,
         Crafting,
         Cosmic,
         LowHp,
@@ -157,6 +167,7 @@ public static class PraiseCategory
         [GilMilestone] = "這是提示音，不是對話：前輩存的 Gil 剛跨過一個新的里程碑。只輸出一句極短提示（2~12 字），像脫口而出的一句話；不要鋪陳、不要說明、不要接第二個子句。",
         [Submarine] = "這是通知，不是誇獎：前輩派出去的潛水艇整隊平安回港了（或僱員的探險全部收完了）。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Retainer] = "這是通知，不是誇獎：前輩的僱員探險完成了，東西可以收了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
+        [ExpertDelivery] = "這是通知，不是誇獎：前輩的稀有品繳交循環把所有角色都跑完了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Crafting] = "這是通知，不是誇獎：前輩把整份製作清單做完了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Cosmic] = "這是通知，不是誇獎：前輩在宇宙探索的任務拿到了金評價。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [LowHp] = "這是戰鬥警示，不是誇獎：前輩的血量掉到危險線以下了，正在戰鬥中。只輸出一句 2~6 字的極短句，像喊出來的一樣；不要稱讚、不要說明、不要鋪陳。",
@@ -203,6 +214,7 @@ public static class PraiseCategory
         [GilMilestone] = 12,
         [Submarine] = 12,
         [Retainer] = 12,
+        [ExpertDelivery] = 12,
         [Crafting] = 12,
         [Cosmic] = 12,
         [LowHp] = 8,
@@ -241,6 +253,7 @@ public static class PraiseCategory
         [GilMilestone] = 2,
         [Submarine] = 2,
         [Retainer] = 2,
+        [ExpertDelivery] = 2,
         [Crafting] = 2,
         [Cosmic] = 2,
         [LowHp] = 2,
@@ -278,6 +291,7 @@ public static class PraiseCategory
     {
         [Submarine] = 5,
         [Retainer] = 5,
+        [ExpertDelivery] = 5,
         [Crafting] = 5,
         [Cosmic] = 5,
         [LowHp] = 15,
