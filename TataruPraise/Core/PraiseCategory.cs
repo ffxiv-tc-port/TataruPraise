@@ -47,6 +47,15 @@ public static class PraiseCategory
     /// </remarks>
     public const string ExpertDelivery = "稀有品";
 
+    /// <summary>
+    /// Marketbuddy：市場重掛（重新上架）把整輪跑完了。<b>鍵名由 IPC 呼叫端逐字使用。</b>
+    /// </summary>
+    /// <remarks>
+    /// 📌 這個鍵沒有內建觸發，只由 Marketbuddy 用 IPC 叫，而且是<b>整輪重掛跑完</b>才響一次，
+    /// 不是每件商品各響一次——後者在幾十件商品的攤位上會變成洗版。
+    /// </remarks>
+    public const string Market = "市場";
+
     /// <summary>Artisan：整份製作清單做完。<b>鍵名由 IPC 呼叫端逐字使用。</b></summary>
     public const string Crafting = "製作";
 
@@ -133,6 +142,7 @@ public static class PraiseCategory
         Submarine,
         Retainer,
         ExpertDelivery,
+        Market,
         Crafting,
         Cosmic,
         LowHp,
@@ -168,6 +178,7 @@ public static class PraiseCategory
         [Submarine] = "這是通知，不是誇獎：前輩派出去的潛水艇整隊平安回港了（或僱員的探險全部收完了）。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Retainer] = "這是通知，不是誇獎：前輩的僱員探險完成了，東西可以收了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [ExpertDelivery] = "這是通知，不是誇獎：前輩的稀有品繳交循環把所有角色都跑完了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
+        [Market] = "這是通知，不是誇獎：前輩的市場重掛全部跑完了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Crafting] = "這是通知，不是誇獎：前輩把整份製作清單做完了。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [Cosmic] = "這是通知，不是誇獎：前輩在宇宙探索的任務拿到了金評價。只輸出一句 2~12 字的極短提示，像喊出來的一樣；不要說明、不要鋪陳。",
         [LowHp] = "這是戰鬥警示，不是誇獎：前輩的血量掉到危險線以下了，正在戰鬥中。只輸出一句 2~6 字的極短句，像喊出來的一樣；不要稱讚、不要說明、不要鋪陳。",
@@ -215,6 +226,7 @@ public static class PraiseCategory
         [Submarine] = 12,
         [Retainer] = 12,
         [ExpertDelivery] = 12,
+        [Market] = 12,
         [Crafting] = 12,
         [Cosmic] = 12,
         [LowHp] = 8,
@@ -254,6 +266,7 @@ public static class PraiseCategory
         [Submarine] = 2,
         [Retainer] = 2,
         [ExpertDelivery] = 2,
+        [Market] = 2,
         [Crafting] = 2,
         [Cosmic] = 2,
         [LowHp] = 2,
@@ -292,6 +305,7 @@ public static class PraiseCategory
         [Submarine] = 5,
         [Retainer] = 5,
         [ExpertDelivery] = 5,
+        [Market] = 5,
         [Crafting] = 5,
         [Cosmic] = 5,
         [LowHp] = 15,

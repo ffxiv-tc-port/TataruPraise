@@ -40,6 +40,7 @@ public static class DefaultPool
         [PraiseCategory.Submarine] = ["潛艇回來啦！"],
         [PraiseCategory.Retainer] = ["僱員回來啦！"],
         [PraiseCategory.ExpertDelivery] = ["稀有品都交完啦！"],
+        [PraiseCategory.Market] = ["市場重掛好啦！"],
         [PraiseCategory.Crafting] = ["製作完成！"],
         [PraiseCategory.Cosmic] = ["任務金評。"],
         [PraiseCategory.LowHp] = ["危險！"],
