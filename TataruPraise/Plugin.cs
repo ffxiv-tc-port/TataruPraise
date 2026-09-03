@@ -68,7 +68,7 @@ public sealed class Plugin : IDalamudPlugin
     /// 啟動狀態。
     /// </summary>
     /// <remarks>
-    /// 🔴 一律 <c>Information</c> 級：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+    /// 🔴 一律 <c>Information</c> 級：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
     /// 這一行回答的是事後看記錄檔時唯一推不出來的事——「總開關到底開著沒、有哪幾個觸發是開的、
     /// 池裡到底有沒有可播的東西」。<b>「有句子」與「有語音」是兩件事</b>，所以兩個數字都印。
     /// </remarks>
