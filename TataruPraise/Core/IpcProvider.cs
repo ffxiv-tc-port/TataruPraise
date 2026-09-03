@@ -18,6 +18,7 @@ public sealed class IpcProvider : IDisposable
     private readonly ICallGateProvider<string, bool> speak;
     private readonly ICallGateProvider<string, bool> praise;
     private readonly ICallGateProvider<bool> isAvailable;
+    private readonly ICallGateProvider<string, bool> isAvailableFor;
 
     /// <summary>
     /// 已經為哪些「未知情境」印過警告（每個情境只印一次）。
@@ -38,6 +39,7 @@ public sealed class IpcProvider : IDisposable
         speak = Svc.PluginInterface.GetIpcProvider<string, bool>(IpcContract.Speak);
         praise = Svc.PluginInterface.GetIpcProvider<string, bool>(IpcContract.Praise);
         isAvailable = Svc.PluginInterface.GetIpcProvider<bool>(IpcContract.IsAvailable);
+        isAvailableFor = Svc.PluginInterface.GetIpcProvider<string, bool>(IpcContract.IsAvailableFor);
 
         speak.RegisterFunc(text =>
         {
@@ -86,8 +88,24 @@ public sealed class IpcProvider : IDisposable
             }
         });
 
+        isAvailableFor.RegisterFunc(category =>
+        {
+            try
+            {
+                // 📌 這裡刻意不對未知情境印警告：呼叫端問「能不能出聲」是<b>查詢</b>，
+                //    回 false 就是正確答案；真的去叫 Praise 時才會走到 WarnUnknownCategoryOnce。
+                return service.IsAvailableFor(category);
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Information($"[TataruPraise] IPC IsAvailableFor 失敗：{ex.Message}");
+                return false;
+            }
+        });
+
         Svc.Log.Information(
-            $"[TataruPraise] IPC 已註冊：{IpcContract.Speak}、{IpcContract.Praise}、{IpcContract.IsAvailable}");
+            $"[TataruPraise] IPC 已註冊：{IpcContract.Speak}、{IpcContract.Praise}、"
+            + $"{IpcContract.IsAvailable}、{IpcContract.IsAvailableFor}");
     }
 
     /// <summary>對一個沒見過的情境印一次 Information（之後同一個情境不再印）。</summary>
@@ -112,5 +130,6 @@ public sealed class IpcProvider : IDisposable
         try { speak.UnregisterFunc(); } catch (Exception ex) { Svc.Log.Information($"[TataruPraise] 註銷 Speak 失敗：{ex.Message}"); }
         try { praise.UnregisterFunc(); } catch (Exception ex) { Svc.Log.Information($"[TataruPraise] 註銷 Praise 失敗：{ex.Message}"); }
         try { isAvailable.UnregisterFunc(); } catch (Exception ex) { Svc.Log.Information($"[TataruPraise] 註銷 IsAvailable 失敗：{ex.Message}"); }
+        try { isAvailableFor.UnregisterFunc(); } catch (Exception ex) { Svc.Log.Information($"[TataruPraise] 註銷 IsAvailableFor 失敗：{ex.Message}"); }
     }
 }

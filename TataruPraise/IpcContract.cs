@@ -29,4 +29,29 @@ public static class IpcContract
 
     /// <summary>現在有沒有辦法出聲（總開關開著、而且有可播的內容）。<c>Func&lt;bool&gt;</c>。</summary>
     public const string IsAvailable = "TataruPraise.IsAvailable";
+
+    /// <summary>
+    /// <b>指定情境</b>現在有沒有辦法出聲。<c>Func&lt;string, bool&gt;</c>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這是<b>新的頻道名</b>，不是把 <see cref="IsAvailable"/> 的語意就地改掉——
+    /// 舊名字的「全域」語意有既有呼叫端在用，改語意會讓它們靜默換行為。
+    /// <para>
+    /// 📌 <see cref="IsAvailable"/> 回 true 只代表「整池<b>有某個情境</b>播得出來」。
+    /// 呼叫端典型寫法是 <c>if(!IsAvailable()) return; Praise(cat);</c>，
+    /// 於是「別的情境有語音、我這個情境一句都沒有」時<b>照樣通過</b>，
+    /// 然後 <c>Praise</c> 回 false——呼叫端分不出「不能出聲」與「這次沒出聲」。
+    /// 這個端點就是拿來補那個洞的。
+    /// </para>
+    /// <para>
+    /// 判斷內容：總開關開著 ＋ 這個情境沒有被使用者關掉 ＋ 這個情境至少有一句已合成語音。
+    /// <b>不</b>看冷卻——冷卻是「這次剛好不出聲」，不是「不能出聲」。
+    /// </para>
+    /// <para>
+    /// ⚠️ 對方沒安裝／舊版沒有這個端點時 <c>InvokeFunc</c> 會擲 <c>IpcNotReadyError</c>，
+    /// 跟其他端點一樣要呼叫端自己 try/catch。<b>catch 之後要當成「不能出聲」處理</b>，
+    /// 不要退回去叫 <see cref="IsAvailable"/>（那樣就把這個端點的意義抵銷掉了）。
+    /// </para>
+    /// </remarks>
+    public const string IsAvailableFor = "TataruPraise.IsAvailableFor";
 }

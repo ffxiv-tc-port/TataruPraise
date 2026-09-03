@@ -48,6 +48,21 @@ public sealed class PraisePool
     private readonly object availabilityGate = new();
     private DateTime availabilityCheckedUtc = DateTime.MinValue;
     private bool availabilityCache;
+
+    /// <summary>
+    /// 逐情境的「有沒有可播內容」快取（值＝上次檢查時間、結果）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 跟 <see cref="availabilityCache"/> 分開存，快取期間共用
+    /// <see cref="AvailabilityCacheDuration"/>：<see cref="HasCachedFor"/> 是<b>公開的 IPC 端點</b>，
+    /// 呼叫端很可能在每幀路徑上問它，而每次問都要對那個情境的整串句子做 <see cref="File.Exists"/>。
+    /// <para>
+    /// 📌 用 <see cref="availabilityGate"/> 這同一把鎖，不另開一把：兩者都只是短暫的字典存取，
+    /// 而多一把鎖就多一個上鎖順序要維護。
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<string, (DateTime CheckedUtc, bool Result)> perCategoryAvailability
+        = new(StringComparer.Ordinal);
     private readonly string dataDir;
     private readonly string poolPath;
     private readonly string cacheDir;
@@ -784,5 +799,41 @@ public sealed class PraisePool
 
         lock (availabilityGate) availabilityCache = any;
         return any;
+    }
+
+    /// <summary>
+    /// <b>這一個情境</b>有沒有可播的內容（IPC 的 <c>IsAvailableFor</c> 用）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 結果逐情境快取 <see cref="AvailabilityCacheDuration"/>，理由同 <see cref="HasAnyCached"/>：
+    /// 這條路徑會被別的外掛從自己的每幀迴圈上叫。
+    /// <para>
+    /// 📌 情境不存在（呼叫端把鍵名打錯、或使用者還沒建那個情境）時回 <c>false</c>——
+    /// 對呼叫端而言「沒有這個池」跟「池是空的」要做的事情一樣：不要走這條通知路徑。
+    /// </para>
+    /// <para>
+    /// ⚠️ 快取<b>不會</b>因為預合成完成而立刻失效，最多晚 2 秒才看得到新合出來的語音。
+    /// 那 2 秒對「現在能不能出聲」沒有意義（合成本來就要跑好幾分鐘）。
+    /// </para>
+    /// </remarks>
+    public bool HasCachedFor(string category)
+    {
+        if (string.IsNullOrEmpty(category)) return false;
+
+        var now = DateTime.UtcNow;
+        lock (availabilityGate)
+        {
+            if (perCategoryAvailability.TryGetValue(category, out var entry)
+                && now - entry.CheckedUtc < AvailabilityCacheDuration)
+            {
+                return entry.Result;
+            }
+        }
+
+        // 🔴 PickCached 會做磁碟 I/O，刻意在鎖外跑（它自己有 gate 保護 pool 字典）。
+        var has = PickCached(category) != null;
+
+        lock (availabilityGate) perCategoryAvailability[category] = (now, has);
+        return has;
     }
 }
