@@ -164,6 +164,23 @@ public sealed class PraiseService : IDisposable
     public bool IsAvailable() => config.Enabled && pool.HasAnyCached();
 
     /// <summary>
+    /// <b>這一個情境</b>現在有沒有辦法出聲。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 三個條件缺一不可：總開關、<b>逐情境</b>的啟用開關、以及這個情境真的有已合成的語音。
+    /// 這正是 <see cref="PlayFromPool"/> 會擋下來的那三件事，只差冷卻。
+    /// <para>
+    /// 📌 刻意<b>不</b>看冷卻：冷卻是「這一次剛好不出聲」，下一次就會出聲；
+    /// 呼叫端拿這個結果去決定「要不要改走別的通知管道」，把冷卻算進來會讓它在冷卻期間
+    /// 多發一次系統匣通知——那是雜訊，不是修好。
+    /// </para>
+    /// </remarks>
+    public bool IsAvailableFor(string category)
+        => config.Enabled
+        && config.IsCategoryEnabled(category)
+        && pool.HasCachedFor(category);
+
+    /// <summary>
     /// 遊戲事件觸發的路徑：吃冷卻也吃機率。
     /// </summary>
     /// <param name="category">情境。</param>
