@@ -68,3 +68,4 @@ jobs:
             TataruPraise.zip
             TataruPraise/bin/Release/TataruPraise/TataruPraise.json
           generate_release_notes: true
+# workflow re-registration trigger 2026-10-26T18:46:26Z
