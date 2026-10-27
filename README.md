@@ -206,7 +206,7 @@ API 端點格式見 [docs/DESIGN.md](docs/DESIGN.md#語音橋接規格)。
 
 ## 授權
 
-與艦隊其他插件一致。語音模型、參考音訊與橋接本身不屬於本 repo。
+MIT，見 [LICENSE](LICENSE)。語音模型、參考音訊與橋接本身不屬於本 repo。
 
 ---
 
