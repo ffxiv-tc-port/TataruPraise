@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -29,13 +30,13 @@ public sealed class AudioPlayer : IDisposable
     private readonly object gate = new();
     private WaveOutEvent? waveOut;
     private WaveFileReader? reader;
-    private bool busy;
-    private bool disposed;
 
-    public bool IsBusy
-    {
-        get { lock (gate) return busy; }
-    }
+    // 只在持有 gate 時寫；讀不拿鎖，因為 PlayCore 會在鎖內開音訊裝置，框架執行緒不能等它。
+    private volatile bool busy;
+    private bool disposed;
+    private int stopFaultLogged;
+
+    public bool IsBusy => busy;
 
     /// <summary>
     /// 丟一段 WAV 去播。已經在播（或已 Dispose）就直接回 <c>false</c>，不排隊。
@@ -45,6 +46,7 @@ public sealed class AudioPlayer : IDisposable
     public bool TryPlay(byte[] wavBytes, float volume)
     {
         if (wavBytes.Length == 0) return false;
+        if (busy) return false;
 
         lock (gate)
         {
@@ -60,6 +62,8 @@ public sealed class AudioPlayer : IDisposable
     /// <summary>從磁碟上的 WAV 檔播。讀檔本身也在背景做。</summary>
     public bool TryPlayFile(string path, float volume)
     {
+        if (busy) return false;
+
         lock (gate)
         {
             if (disposed || busy) return false;
@@ -118,33 +122,62 @@ public sealed class AudioPlayer : IDisposable
             Svc.Log.Information($"[TataruPraise] 播放失敗：{ex.Message}");
             lock (gate)
             {
-                DisposeAudioLocked();
-                busy = false;
+                try
+                {
+                    DisposeAudioLocked();
+                }
+                finally
+                {
+                    busy = false;
+                }
             }
         }
     }
 
+    /// <remarks>
+    /// 🔴 NAudio 從執行緒池直接呼叫（無 SynchronizationContext），漏出去的例外＝遊戲結束，所以整段包住。
+    /// 在這裡 Dispose 自己的 <see cref="WaveOutEvent"/> 是安全的：它先把狀態設成 Stopped 才觸發本事件，
+    /// Dispose 裡的 Stop 因此不動作，其餘只是釋放緩衝與 waveOutClose，不等播放執行緒。
+    /// </remarks>
     private void OnPlaybackStopped(object? sender, StoppedEventArgs e)
     {
-        lock (gate)
+        try
         {
-            DisposeAudioLocked();
-            busy = false;
+            lock (gate)
+            {
+                try
+                {
+                    DisposeAudioLocked();
+                }
+                finally
+                {
+                    busy = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (Interlocked.Exchange(ref stopFaultLogged, 1) == 0)
+                Svc.Log.Information($"[TataruPraise] 播放結束後釋放音訊裝置失敗（之後同樣的失敗不再記錄）：{ex}");
         }
     }
 
     /// <summary>必須在持有 <see cref="gate"/> 時呼叫。</summary>
+    /// <remarks>先清欄位再 Dispose：Dispose 擲例外時不留下下一次播放會再撞一次的舊物件。</remarks>
     private void DisposeAudioLocked()
     {
-        if (waveOut != null)
+        var oldOut = waveOut;
+        var oldReader = reader;
+        waveOut = null;
+        reader = null;
+
+        if (oldOut != null)
         {
-            waveOut.PlaybackStopped -= OnPlaybackStopped;
-            waveOut.Dispose();
-            waveOut = null;
+            oldOut.PlaybackStopped -= OnPlaybackStopped;
+            oldOut.Dispose();
         }
 
-        reader?.Dispose();
-        reader = null;
+        oldReader?.Dispose();
     }
 
     public void Dispose()
