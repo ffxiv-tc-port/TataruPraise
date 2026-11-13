@@ -109,6 +109,7 @@ public sealed class PraisePool
     public void Load()
     {
         Dictionary<string, List<PraiseLine>>? loaded = null;
+        var keepOriginal = false;
         try
         {
             if (File.Exists(poolPath))
@@ -121,6 +122,7 @@ public sealed class PraisePool
         catch (Exception ex)
         {
             Svc.Log.Information($"[TataruPraise] 讀取誇獎池失敗，改用空池：{ex.Message}");
+            keepOriginal = !TryBackupUnreadable();
         }
 
         var seededKeys = new List<string>();
@@ -151,10 +153,28 @@ public sealed class PraisePool
         if (seededKeys.Count == 0) return;
 
         // 🔴 立刻寫回去：不存的話下次啟動又要再補一次（看起來像沒生效）。
-        Save();
+        //    例外：讀壞的原檔沒備份成功時不寫，否則就是用內建句蓋掉使用者唯一的那份。
+        if (!keepOriginal) Save();
         Svc.Log.Information(
             $"[TataruPraise] 誇獎池補進新的內建情境：{string.Join("、", seededKeys)}"
             + $"（共 {seededLines} 句內建句）。這些句子還沒有語音，要按一次「合成」。");
+    }
+
+    /// <summary>讀不懂的 pool.json 複製成 <c>pool.json.bad-時間戳</c>；回傳有沒有備份成功。</summary>
+    private bool TryBackupUnreadable()
+    {
+        var backup = poolPath + ".bad-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        try
+        {
+            File.Copy(poolPath, backup, overwrite: false);
+            Svc.Log.Warning($"[TataruPraise] pool.json 讀不懂，原檔已備份為 {Path.GetFileName(backup)}，本次改用內建句。");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning($"[TataruPraise] pool.json 讀不懂且備份失敗（{ex.Message}），這次啟動不自動寫回 pool.json，原檔保留。");
+            return false;
+        }
     }
 
     /// <summary>存檔。失敗只寫 Information，不擲例外。</summary>
