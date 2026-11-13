@@ -206,10 +206,13 @@ public sealed class PoolJobs : IDisposable
         progress = string.Empty;
         lastResult = string.Empty;
 
+        // 刻意不把 token 傳給 Task.Run：開跑前就取消的話委派永不執行、finally 不跑，旗標會卡在 1。
+        // 取消改由委派開頭自己檢查，照樣走「已取消」與放旗標。
         _ = Task.Run(async () =>
         {
             try
             {
+                token.ThrowIfCancellationRequested();
                 lastResult = await work(token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -232,7 +235,7 @@ public sealed class PoolJobs : IDisposable
                 // 上面那些欄位必須已經收乾淨了。
                 Volatile.Write(ref runningFlag, 0);
             }
-        }, token);
+        });
 
         return true;
     }
