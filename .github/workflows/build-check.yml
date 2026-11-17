@@ -1,6 +1,5 @@
-# 台服 (TC) 建置檢查（TataruPraise）。Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)。
-# ⚠️ 跑 windows-latest：NAudio 元套件會拉 NAudio.WinForms（要 WindowsDesktop framework），
-# ubuntu runner 會回 NETSDK1073；與 Saucy 的 build-check 同一招。
+# 台服 (TC) 建置檢查（TataruPraise）。Dalamud 釘版見下方 $pinUrl。
+# 跑 windows-latest：Dalamud SDK 的目標框架是 net9.0-windows。NAudio 只引用 Core／WinMM 兩顆（不拉 WinForms）。
 name: Build Check
 
 on:
