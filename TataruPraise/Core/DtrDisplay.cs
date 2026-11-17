@@ -214,12 +214,16 @@ public sealed class DtrDisplay : IDisposable
     }
 
     /// <summary>有幾個情境「一句可播的都沒有」——那些情境現在觸發也是靜默的。</summary>
+    /// <remarks>
+    /// 框架執行緒每 5 秒跑一次：走 <see cref="PraisePool.HasCachedFor"/>（2 秒快取、找到一句就停），
+    /// 不用 <see cref="PraisePool.CachedCountOf"/>（對整池逐句 <see cref="System.IO.File.Exists"/>）。
+    /// </remarks>
     private int SilentCategoryCount()
     {
         var n = 0;
         foreach (var category in pool.Categories())
         {
-            if (pool.CachedCountOf(category) == 0) n++;
+            if (!pool.HasCachedFor(category)) n++;
         }
 
         return n;

@@ -898,6 +898,28 @@ public sealed class PraisePool
         return n;
     }
 
+    /// <summary>
+    /// 這個情境至少有一句的語音快取檔在磁碟上嗎。結果與 <c>PickCached(category) != null</c> 相同，
+    /// 但找到第一句就停，不對整串句子做 <see cref="File.Exists"/>。
+    /// </summary>
+    private bool AnyCachedLine(string category)
+    {
+        List<string> texts;
+        lock (gate)
+        {
+            if (!pool.TryGetValue(category, out var list)) return false;
+            texts = new List<string>(list.Count);
+            foreach (var line in list) texts.Add(line.Text);
+        }
+
+        foreach (var text in texts)
+        {
+            if (File.Exists(CachePathFor(text))) return true;
+        }
+
+        return false;
+    }
+
     /// <summary>整池所有句子的快照（擴充池／預合成用）。</summary>
     public List<(string Category, string Text)> Snapshot()
     {
@@ -965,7 +987,7 @@ public sealed class PraisePool
         var any = false;
         foreach (var category in Categories())
         {
-            if (PickCached(category) == null) continue;
+            if (!AnyCachedLine(category)) continue;
             any = true;
             break;
         }
@@ -1003,8 +1025,8 @@ public sealed class PraisePool
             }
         }
 
-        // 🔴 PickCached 會做磁碟 I/O，刻意在鎖外跑（它自己有 gate 保護 pool 字典）。
-        var has = PickCached(category) != null;
+        // 🔴 AnyCachedLine 會做磁碟 I/O，刻意在鎖外跑（它自己有 gate 保護 pool 字典）。
+        var has = AnyCachedLine(category);
 
         lock (availabilityGate) perCategoryAvailability[category] = (now, has);
         return has;
