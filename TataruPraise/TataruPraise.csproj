@@ -20,7 +20,10 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="NAudio" Version="2.3.0"/>
+        <!-- 只引用得到的兩顆（WaveFileReader／SampleProviders 在 Core、WaveOutEvent 在 WinMM）；
+             NAudio 元套件另外拉 WinForms／Asio／Midi／Wasapi，用不到且 WinForms 要 WindowsDesktop。 -->
+        <PackageReference Include="NAudio.Core" Version="2.3.0"/>
+        <PackageReference Include="NAudio.WinMM" Version="2.3.0"/>
     </ItemGroup>
 
     <Target Name="PersistBuildNumber" AfterTargets="Build">
