@@ -186,6 +186,25 @@ public sealed class ConfigWindow : Window
 
     private Configuration Config => plugin.Config;
 
+    // 文字欄位：值逐字寫進設定（當場生效），設定檔只在離開欄位、關窗、卸載時存，不每個字存一次。
+    private bool textFieldDirty;
+
+    /// <summary>緊接在文字欄位之後呼叫：離開欄位（Enter／點別處）時存檔。</summary>
+    private void SaveTextFieldOnDeactivate()
+    {
+        if (ImGui.IsItemDeactivatedAfterEdit()) FlushTextFields();
+    }
+
+    /// <summary>有改過還沒存的文字欄位就存檔。</summary>
+    public void FlushTextFields()
+    {
+        if (!textFieldDirty) return;
+        textFieldDirty = false;
+        Config.Save();
+    }
+
+    public override void OnClose() => FlushTextFields();
+
     public override void Draw()
     {
         DrawMasterSwitch();
@@ -642,8 +661,10 @@ public sealed class ConfigWindow : Window
         if (ImGui.InputText("橋接位址##ttsHost", ref host, 256))
         {
             Config.TtsHost = host;
-            Config.Save();
+            textFieldDirty = true;
         }
+
+        SaveTextFieldOnDeactivate();
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(TtsHostTooltip);
@@ -653,8 +674,10 @@ public sealed class ConfigWindow : Window
         if (ImGui.InputText("API Key##ttsApiKey", ref apiKey, 256, ImGuiInputTextFlags.Password))
         {
             Config.TtsApiKey = apiKey;
-            Config.Save();
+            textFieldDirty = true;
         }
+
+        SaveTextFieldOnDeactivate();
 
         if (ImGui.IsItemHovered())
         {
@@ -749,8 +772,10 @@ public sealed class ConfigWindow : Window
         if (ImGui.InputText("聲線##voiceManual", ref voice, 64))
         {
             Config.VoiceId = voice;
-            Config.Save();
+            textFieldDirty = true;
         }
+
+        SaveTextFieldOnDeactivate();
 
         ImGui.TextColored(
             ColorUnknown,
@@ -1864,8 +1889,10 @@ public sealed class ConfigWindow : Window
         if (ImGui.InputText("API 金鑰##geminiKey", ref key, 256, ImGuiInputTextFlags.Password))
         {
             Config.GeminiApiKey = key;
-            Config.Save();
+            textFieldDirty = true;
         }
+
+        SaveTextFieldOnDeactivate();
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("存在這個插件的設定檔裡，不會進版控、不會寫進記錄檔。");
@@ -1886,8 +1913,10 @@ public sealed class ConfigWindow : Window
         if (ImGui.InputText("模型##geminiModel", ref model, 128))
         {
             Config.GeminiModel = model;
-            Config.Save();
+            textFieldDirty = true;
         }
+
+        SaveTextFieldOnDeactivate();
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(GeminiModelTooltip);

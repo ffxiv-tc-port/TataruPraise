@@ -157,6 +157,7 @@ public sealed class Plugin : IDalamudPlugin
         Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfig;
         Svc.PluginInterface.UiBuilder.OpenMainUi -= ToggleConfig;
+        configWindow.FlushTextFields();
         WindowSystem.RemoveAllWindows();
 
         // 🔴 順序：先把「還會再產生工作的東西」拆掉（觸發線、IPC、背景批次），最後才拆播放器。

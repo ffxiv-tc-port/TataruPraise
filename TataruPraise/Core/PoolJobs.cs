@@ -432,35 +432,44 @@ public sealed class PoolJobs : IDisposable
         var voice = config.VoiceId;
         var ok = 0;
         var failed = 0;
+        var marked = false;
 
-        for (var i = 0; i < pending.Count; i++)
+        // pool.json 是整份重寫：整批只在結束（含取消）時存一次，不每句重寫一次。
+        try
         {
-            token.ThrowIfCancellationRequested();
-            progress = $"{i + 1}/{pending.Count}";
-
-            var text = pending[i];
-
-            var wav = await TtsBridge.SynthesizeAsync(host, voice, text, 60, apiKey).ConfigureAwait(false);
-            if (wav == null)
+            for (var i = 0; i < pending.Count; i++)
             {
-                failed++;
-                continue;
-            }
+                token.ThrowIfCancellationRequested();
+                progress = $"{i + 1}/{pending.Count}";
 
-            try
-            {
-                var path = pool.CachePathFor(text);
-                var tmp = path + ".tmp";
-                await File.WriteAllBytesAsync(tmp, wav, token).ConfigureAwait(false);
-                File.Move(tmp, path, overwrite: true);
-                pool.SetCachedWav(text, "cache/" + PraisePool.CacheFileName(text));
-                ok++;
+                var text = pending[i];
+
+                var wav = await TtsBridge.SynthesizeAsync(host, voice, text, 60, apiKey).ConfigureAwait(false);
+                if (wav == null)
+                {
+                    failed++;
+                    continue;
+                }
+
+                try
+                {
+                    var path = pool.CachePathFor(text);
+                    var tmp = path + ".tmp";
+                    await File.WriteAllBytesAsync(tmp, wav, token).ConfigureAwait(false);
+                    File.Move(tmp, path, overwrite: true);
+                    marked |= pool.MarkCachedWav(text, "cache/" + PraisePool.CacheFileName(text));
+                    ok++;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    Svc.Log.Information($"[TataruPraise] 寫入語音快取失敗：{ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                failed++;
-                Svc.Log.Information($"[TataruPraise] 寫入語音快取失敗：{ex.Message}");
-            }
+        }
+        finally
+        {
+            if (marked) pool.Save();
         }
 
         return (ok, failed, null);

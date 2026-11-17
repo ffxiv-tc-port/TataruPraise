@@ -511,8 +511,16 @@ public sealed class PraisePool
         return removedCount;
     }
 
-    /// <summary>把某句話的快取路徑寫回池裡。</summary>
+    /// <summary>把某句話的快取路徑寫回池裡，有改到就當場存檔。</summary>
     public void SetCachedWav(string text, string relativePath)
+    {
+        if (MarkCachedWav(text, relativePath)) Save();
+    }
+
+    /// <summary>
+    /// 只改記憶體裡的快取路徑、不存檔（批次合成在整批結束後 <see cref="Save"/> 一次）；回傳有沒有改到。
+    /// </summary>
+    public bool MarkCachedWav(string text, string relativePath)
     {
         var changed = false;
         lock (gate)
@@ -528,7 +536,7 @@ public sealed class PraisePool
             }
         }
 
-        if (changed) Save();
+        return changed;
     }
 
     /// <summary>這個情境存在嗎（IPC 收到未知情境時要分得出「沒有這個鍵」與「有鍵但沒句子」）。</summary>
