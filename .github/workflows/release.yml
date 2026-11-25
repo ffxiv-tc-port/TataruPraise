@@ -1,4 +1,4 @@
-# 台服 (TC) 發版（TataruPraise）。由 release_plugin.py 以 workflow_dispatch 觸發，Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)。
+# 台服 (TC) 發版（TataruPraise）。由 release_plugin.py 以 workflow_dispatch 觸發，Dalamud 釘在 API13（版本以 $pinUrl 為準）。
 # 🔴 2026-09-04：本 repo 做過一次「刪除後同名重建」（把外來 fork 的關聯從我方這側清掉）。
 #    重建之後 GitHub 只會自動註冊「有被 push 事件觸發過」的 workflow —— 這一支是
 #    workflow_dispatch-only，當下 `gh workflow list` 只看得到 Build Check，Release 不見了，
@@ -68,7 +68,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.IO.Compression
           $n = "$env:LEAK_GUARD_NEEDLE".Trim().ToLowerInvariant()
-          if ($n.Length -lt 4 -or $n -cnotmatch '^[a-z0-9_.-]+$') { throw "secret LEAK_GUARD_NEEDLE is empty or malformed (length $($n.Length)); refusing to upload" }
+          if ($n.Length -lt 4 -or $n -cnotmatch '^[a-z0-9_.-]+$') { throw "secret LEAK_GUARD_NEEDLE is empty or malformed; refusing to upload" }
           $L = [Text.Encoding]::Latin1
           $cases = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
           [void]$cases.Add($n); [void]$cases.Add($n.Substring(0, 1).ToUpperInvariant() + $n.Substring(1)); [void]$cases.Add($n.ToUpperInvariant())
