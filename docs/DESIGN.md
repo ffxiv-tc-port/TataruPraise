@@ -232,6 +232,6 @@ catch (Exception)
 dotnet build TataruPraise/TataruPraise.csproj -c Release -p:DalamudLibPath=D:/ffxiv-tc-port/Dalamud/bin/Release/
 ```
 
-（尾端斜線不能省。）Dalamud 釘在 API13（`dalamud-pin-v13.0.0.16`），目標 `net9.0-windows7.0`。
+（尾端斜線不能省。）Dalamud 釘在 API13（CI 用 `dalamud-pin-v7.30.0.1`，以 workflow 的 `$pinUrl` 為準），目標 `net9.0-windows7.0`。
 音訊走 NAudio 2.3.0（`WaveOutEvent` + `WaveFileReader` + `VolumeSampleProvider`），
 **整個解碼與播放都在背景執行緒**，不碰 framework tick。
