@@ -39,7 +39,7 @@
 
 <!-- BEGIN 情境表 -->
 
-> **權威來源＝`TataruPraise/Core/PraiseCategory.cs`。**這張表由 `tools/gen_category_table.py`
+> **權威來源＝`TataruPraise/Core/PraiseCategory.cs`**。這張表由 `tools/gen_category_table.py`
 > 從原始碼逐字產生，**隨版本更新**；抄鍵名請以原始碼為準。
 
 | 鍵名（＝`pool.json` 的鍵、也是 IPC 參數） | 類型 | 冷卻 | 句長 | 觸發來源 |
@@ -77,8 +77,8 @@
 | `發現魔物` | 通知 | 5 秒 | 2～12 字 | HuntHelper：A／B／S 級魔物出現 |
 | `背包快滿` | 通知 | 5 秒 | 2～12 字 | InventoryTools：背包快滿 |
 | `每日重置` | 通知 | 5 秒 | 2～12 字 | DailyDuty：每日重置 |
-| `急停` | 通知 | 5 秒 | 2～12 字 | TCToolbox：全艦隊急停整輪跑完，全部停妥 |
-| `急停失敗` | 通知 | 5 秒 | 2～12 字 | TCToolbox：全艦隊急停有對象沒停下來 |
+| `急停` | 通知 | 5 秒 | 2～12 字 | TCToolbox：急停（`/tcstopall`，一次叫停所有自動化插件）整輪跑完，全部停妥 |
+| `急停失敗` | 通知 | 5 秒 | 2～12 字 | TCToolbox：急停（`/tcstopall`）跑完，但有插件沒停下來 |
 | `巨集完成` | 通知 | 5 秒 | 2～12 字 | SomethingNeedDoing：巨集自己跑到結束 |
 | `路線跑完` | 通知 | 5 秒 | 2～12 字 | visland：採集路線整條走完 |
 | `宇宙停止` | 通知 | 5 秒 | 2～12 字 | ICE：宇宙探索自動化達成停止條件而收工 |
